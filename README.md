@@ -41,5 +41,5 @@ e.g. `foobar` or `foobarbaz`.
 
 ## AUTHORS
 
- - David Čepelík <david.cepelik@showmax.com> (c) 2018
- - Ondřej Hrubý <o@hrubon.cz> (c) 2018
+ - David Čepelík
+ - Ondřej Hrubý
