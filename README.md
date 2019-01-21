@@ -6,9 +6,6 @@ High performance, low memory consumption compact trie data structure written in 
 
 Serious limitations:
 
- - You can only insert strings and use the membership test to tell if the string
-   is present in the trie or not. There's no way to associate custom data with
-   the key.
  - I never needed deletion, so I never implemented it.
 
 I'll add missing features when I need them. If you need them earlier, please send

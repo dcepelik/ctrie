@@ -4,31 +4,33 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX(a, b)       ((a) >= (b) ? (a) : (b))
-#define MIN(a, b)       ((a) <= (b) ? (a) : (b))
+#define MAX(a, b)      ((a) >= (b) ? (a) : (b))
+#define MIN(a, b)      ((a) <= (b) ? (a) : (b))
 
-#define FLAGS_MASK	0x03
-#define NODE_INIT_SIZE	0
+#define FLAGS_MASK     0x03
+#define NODE_INIT_SIZE 0
 
-typedef unsigned char	byte_t;
+typedef unsigned char  byte_t;
 
 /*
  * Node flags.
  */
 enum
 {
-	F_WORD = 1 << 0,	/* it's a word */
-	F_WILD = 1 << 1,	/* it's a prefix wild-card */
-	F_SEPL = 1 << 2,	/* label allocated separately, use `lptr` */
+	F_USER = 1 << 0, /* user-defined boolean flag */
+	F_WORD = 1 << 1, /* it's a word */
+	F_WILD = 1 << 2, /* it's a prefix wild-card */
+	F_SEPL = 1 << 3, /* label allocated separately, use `lptr` */
+	F_SEPD = 1 << 4, /* data allocated separately */
 };
 
 /*
- * Size of the `label` field in the `tnode` structure. This must be enough to
+ * Size of the `label` field in the `ctnode` structure. This must be enough to
  * hold a `char *`. If the label is shorter than this value, it will be
  * embedded in the field directly, thus saving the overhead of having to create
  * a heap copy of the string.
  */
-#define LABEL_SIZE	13
+#define LABEL_SIZE 13
 
 /*
  * A trie node, or more precisely its header. In memory, two arrays (possibly
@@ -40,23 +42,23 @@ enum
  * It is resized to fulfil storage requirements as they change. This ensures
  * that the trie is reasonably compact at all times.
  */
-struct tnode
+struct ctnode
 {
-	char label[LABEL_SIZE];	/* short-enough label or a pointer to a label */
-	byte_t flags;		/* various flags */
-	byte_t size;		/* capacity of the `child` array */
-	byte_t nchild;		/* number of children */
-	struct tnode *child[1];	/* child pointers start here */
+	char label[LABEL_SIZE];  /* short-enough label or a pointer to a label */
+	byte_t flags;            /* various flags */
+	byte_t size;             /* capacity of the `child` array */
+	byte_t nchild;           /* number of children */
+	struct ctnode *child[];  /* child pointers start here */
 };
 
 _Static_assert(sizeof(char *) <= LABEL_SIZE, "Label pointer is longer than LABEL_SIZE");
 
 /*
  * Return pointer to the label of node `n`. This is either pointer to the
- * `label` content if the label was embedded in the `tnode` directly, or the
+ * `label` content if the label was embedded in the `ctnode` directly, or the
  * pointer stored in `label` if the label was allocated externally.
  */
-static char *get_label(struct tnode *n)
+static char *get_label(struct ctnode *n)
 {
 	return (n->flags & F_SEPL) ? *(char **)&n->label : n->label;
 }
@@ -66,7 +68,7 @@ static char *get_label(struct tnode *n)
  * will be copied into the `label` field of the node. If it's longer, create
  * a copy of the string given using `strdup`.
  */
-static void set_label(struct tnode *n, char *label)
+static void set_label(struct ctnode *n, char *label)
 {
 	char *old_label = get_label(n);
 	bool need_free = (n->flags & F_SEPL);
@@ -86,32 +88,42 @@ static void set_label(struct tnode *n, char *label)
 /*
  * Return the number of bytes needed to allocate a node with size `size`.
  */
-static size_t alloc_size(size_t size)
+static size_t alloc_size(struct ctrie *t, size_t size)
 {
-	return sizeof(struct tnode) - sizeof(void *) + (sizeof(void *) + 1) * size;
+	size_t ptrs = size * sizeof(struct ctnode *);
+	size_t chars = size;
+	return sizeof(struct ctnode) + ptrs + t->data_size + chars;
 }
 
 /*
  * Return a pointer to the character array of the node `n`.
  */
-static char *char_array(struct tnode *n)
+static char *char_array(struct ctrie *t, struct ctnode *n)
 {
-	return (char *)((byte_t *)n + alloc_size(n->size) - n->size);
+	return (char *)((byte_t *)n + alloc_size(t, n->size) - n->size);
+}
+
+/*
+ * Return a pointer to the data memory.
+ */
+static void *data(struct ctrie *t, struct ctnode *n)
+{
+	return (void *)(char_array(t, n) - t->data_size);
 }
 
 /*
  * Resize the node `n` to size `new_size`.
  */
-static struct tnode *resize(struct tnode *n, size_t new_size)
+static struct ctnode *resize(struct ctrie *t, struct ctnode *n, size_t new_size)
 {
 	assert(n != NULL);
-	n = realloc(n, alloc_size(new_size));
+	n = realloc(n, alloc_size(t, new_size));
 	assert(n != NULL);
 	size_t old_size = n->size;
-	char *old = char_array(n);
+	void *old = data(t, n);
 	n->size = new_size;
-	if (old_size)
-		memmove(char_array(n), old, old_size);
+	/* copy both data and the char array to the new node */
+	memmove(data(t, n), old, t->data_size + old_size);
 	return n;
 }
 
@@ -120,10 +132,10 @@ static struct tnode *resize(struct tnode *n, size_t new_size)
  * at least `min_size`, i.e. that `min_size` children can subsequently
  * be inserted without the need to reallocate the node.
  */
-static struct tnode *new_node(size_t min_size)
+static struct ctnode *new_node(struct ctrie *t, size_t min_size)
 {
 	size_t size = MAX(min_size, NODE_INIT_SIZE);
-	struct tnode *n = malloc(alloc_size(size));
+	struct ctnode *n = malloc(alloc_size(t, size));
 	n->nchild = 0;
 	n->size = size;
 	n->flags = 0;
@@ -131,9 +143,9 @@ static struct tnode *new_node(size_t min_size)
 	return n;
 }
 
-static size_t find_child_idx(struct tnode *n, char k)
+static size_t find_child_idx(struct ctrie *t, struct ctnode *n, char k)
 {
-	char *a = char_array(n);
+	char *a = char_array(t, n);
 	size_t l = 0, r = n->nchild;
 	while (l < r) { /* won't run if no child */
 		size_t m = (l + r) / 2;
@@ -145,22 +157,22 @@ static size_t find_child_idx(struct tnode *n, char k)
 	return l; /* 0 if no child */
 }
 
-static struct tnode *find_child(struct tnode *n, char k)
+static struct ctnode *find_child(struct ctrie *t, struct ctnode *n, char k)
 {
-	size_t idx = find_child_idx(n, k);
-	return (idx < n->nchild && char_array(n)[idx] == k) ? n->child[idx] : NULL;
+	size_t idx = find_child_idx(t, n, k);
+	return (idx < n->nchild && char_array(t, n)[idx] == k) ? n->child[idx] : NULL;
 }
 
 #define ARRAY_SHR(a, idx, size) \
 	memmove((a) + (idx) + 1, (a) + (idx), ((size) - (idx)) * sizeof(*(a)))
 
-static struct tnode *insert_child(struct tnode *n, char k, struct tnode *child)
+static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, struct ctnode *child)
 {
 	if (n->size == n->nchild)
-		n = resize(n, MAX(1, MIN(2 * n->size, 256)));
-	size_t idx = find_child_idx(n, k);
+		n = resize(t, n, MAX(1, MIN(2 * n->size, 255)));
+	size_t idx = find_child_idx(t, n, k);
 	assert(idx < n->size);
-	char *a = char_array(n);
+	char *a = char_array(t, n);
 	ARRAY_SHR(a, idx, n->nchild);
 	ARRAY_SHR(n->child, idx, n->nchild);
 	a[idx] = k;
@@ -169,12 +181,13 @@ static struct tnode *insert_child(struct tnode *n, char k, struct tnode *child)
 	return n;
 }
 
-void ctrie_init(struct trie *t)
+void ctrie_init(struct ctrie *t, size_t data_size)
 {
-	t->fake_root = insert_child(new_node(1), '\0', new_node(0));
+	t->data_size = data_size;
+	t->fake_root = insert_child(t, new_node(t, 1), '\0', new_node(t, 0));
 }
 
-static void delete_node(struct tnode *n)
+static void delete_node(struct ctnode *n)
 {
 	for (size_t i = 0; i < n->nchild; i++)
 		delete_node(n->child[i]);
@@ -183,15 +196,15 @@ static void delete_node(struct tnode *n)
 	free(n);
 }
 
-void ctrie_free(struct trie *t)
+void ctrie_free(struct ctrie *t)
 {
 	delete_node(t->fake_root);
 }
 
-struct tnode *ctrie_find(struct trie *t, char *key)
+static struct ctnode *find(struct ctrie *t, char *key)
 {
-	struct tnode *n = t->fake_root->child[0];
-	struct tnode *wild = NULL;
+	struct ctnode *n = t->fake_root->child[0];
+	struct ctnode *wild = NULL;
 	while (n) {
 		char *l;
 		for (l = get_label(n); *key && *key == *l; l++, key++);
@@ -201,24 +214,30 @@ struct tnode *ctrie_find(struct trie *t, char *key)
 			return n->flags & F_WORD ? n : wild;
 		if (n->flags & F_WILD)
 			wild = n;
-		n = find_child(n, *key++);
+		n = find_child(t, n, *key++);
 	}
 	return wild;
 }
 
-bool ctrie_contains(struct trie *t, char *key)
+void *ctrie_find(struct ctrie *t, char *key)
 {
-	return ctrie_find(t, key) != NULL;
+	struct ctnode *n = find(t, key);
+	return n ? data(t, n) : NULL;
 }
 
-static void ctrie_print_node(struct trie *t, struct tnode *n, size_t level)
+bool ctrie_contains(struct ctrie *t, char *key)
 {
-	char *a = char_array(n);
+	return find(t, key) != NULL;
+}
+
+static void ctrie_print_node(struct ctrie *t, struct ctnode *n, size_t level)
+{
+	char *a = char_array(t, n);
 	for (size_t i = 0; i < n->nchild; i++) {
-		struct tnode *c = n->child[i];
+		struct ctnode *c = n->child[i];
 		for (size_t j = 0; j < 4 * level; j++)
 			putchar(' ');
-		printf("[%c]->'%s' size=%i alloc=%zuB <", a[i], get_label(c), c->size, alloc_size(c->size));
+		printf("[%c]->'%s' size=%i alloc=%zuB <", a[i], get_label(c), c->size, alloc_size(t, c->size));
 		if (c->flags & F_WORD)
 			putchar('W');
 		if (!(c->flags & F_SEPL))
@@ -230,23 +249,23 @@ static void ctrie_print_node(struct trie *t, struct tnode *n, size_t level)
 	}
 }
 
-void ctrie_dump(struct trie *t)
+void ctrie_dump(struct ctrie *t)
 {
 	ctrie_print_node(t, t->fake_root->child[0], 0);
 }
 
-struct tnode *ctrie_insert(struct trie *t, char *key, bool wildcard)
+void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
 {
 	/* TODO assert key not empty */
-	struct tnode *n = t->fake_root->child[0], *parent = t->fake_root;
+	struct ctnode *n = t->fake_root->child[0], *parent = t->fake_root;
 	size_t idx = 0;
 	char *l;
 	while (1) { /* find longest prefix of key in the trie */
 		for (l = get_label(n); *key && *key == *l; l++, key++);
 		if (*l || !*key) /* false for root label and non-empty key */
 			break;
-		size_t next_idx = find_child_idx(n, *key);
-		if (next_idx >= n->nchild || char_array(n)[next_idx] != *key)
+		size_t next_idx = find_child_idx(t, n, *key);
+		if (next_idx >= n->nchild || char_array(t, n)[next_idx] != *key)
 			break;
 		key++;
 		parent = n;
@@ -254,8 +273,8 @@ struct tnode *ctrie_insert(struct trie *t, char *key, bool wildcard)
 		idx = next_idx;
 	}
 	if (*l) { /* create new node between `parent` and `n`, split label */
-		struct tnode *s = new_node(1);
-		s = insert_child(s, *l, n); /* won't trigger resize */
+		struct ctnode *s = new_node(t, 1);
+		s = insert_child(t, s, *l, n); /* won't trigger resize */
 		*l++ = '\0';
 		set_label(s, get_label(n));
 		parent->child[idx] = s;
@@ -263,8 +282,8 @@ struct tnode *ctrie_insert(struct trie *t, char *key, bool wildcard)
 		n = s;
 	}
 	if (*key) { /* `n` is a prefix for `key`, prolong the path */
-		struct tnode *new = new_node(0);
-		n = insert_child(n, *key++, new);
+		struct ctnode *new = new_node(t, 0);
+		n = insert_child(t, n, *key++, new);
 		set_label(new, key); /* without the first char */
 		parent->child[idx] = n;
 		n = new;
@@ -272,5 +291,5 @@ struct tnode *ctrie_insert(struct trie *t, char *key, bool wildcard)
 	n->flags |= F_WORD;
 	if (wildcard)
 		n->flags |= F_WILD;
-	return n;
+	return data(t, n);
 }

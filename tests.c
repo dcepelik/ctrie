@@ -1,11 +1,15 @@
 #include "ctrie.h"
 #include <assert.h>
-#include <stdlib.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
-#define KEY_MAX_LEN		6
-#define LONG_KEY_TEST_SIZE	1024
+#define KEY_MAX_LEN        11
+#define LONG_KEY_TEST_SIZE 1024
+#define ENGLISH_WORD_MAX   45
+#define WORDS_FILE         "words.txt"
 
 int inc(char k[KEY_MAX_LEN])
 {
@@ -20,66 +24,92 @@ int inc(char k[KEY_MAX_LEN])
 
 static void test_seq(void)
 {
-	struct trie yes, no;
-	ctrie_init(&yes);
-	ctrie_init(&no);
+	struct ctrie a, b;
 	char key[KEY_MAX_LEN + 1];
+	int *d;
+	int n = 0;
+
+	ctrie_init(&a, sizeof(*d));
+	ctrie_init(&b, sizeof(*d));
+
 	for (size_t i = 0; i < KEY_MAX_LEN; i++)
 		key[i] = 'a';
 	key[KEY_MAX_LEN] = '\0';
 
+	n = 0;
 	do {
-		ctrie_insert((rand() % 2) ? &yes : &no, key, false);
+		d = ctrie_insert((rand() % 2) ? &a : &b, key, false);
+		*d = n++;
 	} while (inc(key));
 
+	n = 0;
 	do {
-		if (ctrie_contains(&yes, key))
-			assert(!ctrie_contains(&no, key));
-		if (ctrie_contains(&no, key))
-			assert(!ctrie_contains(&yes, key));
+		if (ctrie_contains(&a, key)) {
+			assert(!ctrie_contains(&b, key));
+			d = ctrie_find(&a, key);
+			assert(*d == n);
+		}
+		if (ctrie_contains(&b, key)) {
+			assert(!ctrie_contains(&a, key));
+			d = ctrie_find(&b, key);
+			assert(*d == n);
+		}
+		n++;
 	} while (inc(key));
-	ctrie_free(&yes);
-	ctrie_free(&no);
+	ctrie_free(&a);
+	ctrie_free(&b);
 }
 
 static void test_long_keys(void)
 {
-	struct trie t;
-	ctrie_init(&t);
+	struct ctrie t;
 	char key[KEY_MAX_LEN];
+	char *d;
+
+	ctrie_init(&t, KEY_MAX_LEN);
 	for (size_t n = 0; n < LONG_KEY_TEST_SIZE; n++) {
 		size_t len = rand() % KEY_MAX_LEN;
 		for (size_t i = 0; i < len; i++)
 			key[i] = 'a' + (rand() % ('z' - 'a'));
 		key[len] = '\0';
-		struct tnode *n = ctrie_insert(&t, key, false);
-		assert(n == ctrie_find(&t, key));
-		assert(n == ctrie_insert(&t, key, false));
+		d = ctrie_insert(&t, key, false);
+		assert(d == ctrie_find(&t, key));
+		assert(d == ctrie_insert(&t, key, false));
 	}
 	ctrie_free(&t);
 }
 
-#include <stdio.h>
-
-#define ENGLISH_WORD_MAX	32
-
 static void test_english_words(void)
 {
-	struct trie t;
-	FILE *f = fopen("words.txt", "r");
-	assert(f != NULL);
-	size_t size = ENGLISH_WORD_MAX + 1;
-	char *word = malloc(size);
-	assert(word);
+	struct ctrie t;
+	FILE *words;
+	char *word;
+	size_t word_size;
 	ssize_t len;
-	ctrie_init(&t);
-	while ((len = getline(&word, &size, f)) > 0) {
+	char *d;
+
+	words = fopen(WORDS_FILE, "r");
+	assert(words != NULL);
+	word_size = ENGLISH_WORD_MAX + 1 + 1; /* new line and '\0' */
+	word = malloc(word_size);
+	assert(word);
+
+	ctrie_init(&t, word_size);
+
+	while ((len = getline(&word, &word_size, words)) > 0) {
 		word[len - 1] = '\0'; /* trim the new-line */
-		ctrie_insert(&t, word, false);
+		d = ctrie_insert(&t, word, false);
+		strncpy(d, word, len + 1);
+	}
+	fseek(words, SEEK_SET, 0);
+	while ((len = getline(&word, &word_size, words)) > 0) {
+		word[len - 1] = '\0'; /* trim the new-line */
 		assert(ctrie_contains(&t, word));
+		d = ctrie_find(&t, word);
+		assert(strcmp(d, word) == 0);
 	}
 	free(word);
-	fclose(f);
+	fclose(words);
 	ctrie_free(&t);
 }
 
