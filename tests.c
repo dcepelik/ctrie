@@ -22,6 +22,10 @@ int inc(char k[KEY_MAX_LEN])
 	return i >= 0;
 }
 
+static void test_iter_seq(void)
+{
+}
+
 static void test_seq(void)
 {
 	struct ctrie a, b;
@@ -135,6 +139,7 @@ static void test_remove_seq(void)
 int main(void)
 {
 	srand(time(NULL));
+	test_iter_seq();
 	test_seq();
 	test_long_keys();
 	test_english_words();

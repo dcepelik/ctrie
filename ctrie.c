@@ -372,3 +372,64 @@ void ctrie_remove(struct ctrie *t, char *key)
 	if (p->nchild == 1 && !(p->flags & F_WORD))
 		cut(t, p, pp);
 }
+
+struct crumb
+{
+	struct ctnode *n;
+	size_t idx;
+	size_t key_len;
+};
+
+struct ctrie_iter
+{
+	struct ctrie *t;
+	struct crumb *crumbs;
+	size_t crumbs_size;
+	size_t ncrumbs;
+};
+
+#define ITER_CRUMBS_INIT_SIZE 4
+
+static struct crumb *push_crumb(struct ctrie_iter *it, struct ctnode *n)
+{
+	if (it->ncrumbs == it->crumbs_size) {
+		it->crumbs_size = MAX(ITER_CRUMBS_INIT_SIZE, 2 * it->crumbs_size);
+		it->crumbs = realloc(it->crumbs, it->crumbs_size * sizeof(*it->crumbs));
+		assert(it->crumbs);
+	}
+	struct crumb *c = &it->crumbs[it->ncrumbs++];
+	c->n = n;
+	c->idx = -1;
+	return c;
+}
+
+void ctrie_iter_init(struct ctrie *t, struct ctrie_iter *it)
+{
+	it->t = t;
+	it->crumbs = NULL;
+	it->crumbs_size = it->ncrumbs = 0;
+	push_crumb(it, t->fake_root->child[0])->key_len = 0;
+}
+
+struct ctnode *ctrie_iter_next(struct ctrie_iter *it)
+{
+	struct crumb *c;
+	struct ctnode *n;
+	while (it->ncrumbs) {
+		c = &it->crumbs[it->ncrumbs - 1];
+		c->idx++;
+		if (c->idx < c->n->nchild) {
+			n = c->n->child[c->idx];
+			if (n->nchild)
+				push_crumb(it, n)->key_len = 0;
+			return n;
+		}
+		it->ncrumbs--;
+	}
+	return NULL;
+}
+
+void ctrie_iter_free(struct ctrie_iter *it)
+{
+	free(it->crumbs);
+}
