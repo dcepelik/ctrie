@@ -2,15 +2,6 @@
 
 High performance, low memory consumption compact trie data structure written in C. 
 
-## WIP WARNING
-
-Serious limitations:
-
- - I never needed deletion, so I never implemented it.
-
-I'll add missing features when I need them. If you need them earlier, please send
-a patch and tests for the new functionality, I'll be happy to merge it ASAP.
-
 ## DESCRIPTION
 
 A [compact trie](https://en.wikipedia.org/wiki/Radix_tree) is a

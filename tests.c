@@ -113,11 +113,31 @@ static void test_english_words(void)
 	ctrie_free(&t);
 }
 
+static void test_remove_seq(void)
+{
+	struct ctrie a, b;
+	char key[KEY_MAX_LEN + 1];
+
+	ctrie_init(&a, 0);
+
+	for (size_t i = 0; i < KEY_MAX_LEN; i++)
+		key[i] = 'a';
+	key[KEY_MAX_LEN] = '\0';
+
+	do {
+		ctrie_insert(&a, key, false);
+		assert(ctrie_contains(&a, key));
+		ctrie_remove(&a, key);
+		assert(!ctrie_contains(&a, key));
+	} while (inc(key));
+}
+
 int main(void)
 {
 	srand(time(NULL));
 	test_seq();
 	test_long_keys();
 	test_english_words();
+	test_remove_seq();
 	return EXIT_SUCCESS;
 }

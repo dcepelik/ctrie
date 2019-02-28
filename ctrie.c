@@ -51,7 +51,8 @@ struct ctnode
 	struct ctnode *child[];  /* child pointers start here */
 };
 
-_Static_assert(sizeof(char *) <= LABEL_SIZE, "Label pointer is longer than LABEL_SIZE");
+_Static_assert(sizeof(char *) <= LABEL_SIZE,
+	"LABEL_SIZE too small to hold a char *, please increase");
 
 /*
  * Return pointer to the label of node `n`. This is either pointer to the
@@ -104,7 +105,7 @@ static char *char_array(struct ctrie *t, struct ctnode *n)
 }
 
 /*
- * Return a pointer to the data memory.
+ * Return a pointer to the data memory of the node `n`.
  */
 static void *data(struct ctrie *t, struct ctnode *n)
 {
@@ -157,14 +158,8 @@ static size_t find_child_idx(struct ctrie *t, struct ctnode *n, char k)
 	return l; /* 0 if no child */
 }
 
-static struct ctnode *find_child(struct ctrie *t, struct ctnode *n, char k)
-{
-	size_t idx = find_child_idx(t, n, k);
-	return (idx < n->nchild && char_array(t, n)[idx] == k) ? n->child[idx] : NULL;
-}
-
-#define ARRAY_SHR(a, idx, size) \
-	memmove((a) + (idx) + 1, (a) + (idx), ((size) - (idx)) * sizeof(*(a)))
+#define ARRAY_SHIFT(a, j, i, size) \
+	memmove((a) + (j), (a) + (i), ((size) - (i)) * sizeof(*(a)))
 
 static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, struct ctnode *child)
 {
@@ -173,8 +168,8 @@ static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, st
 	size_t idx = find_child_idx(t, n, k);
 	assert(idx < n->size);
 	char *a = char_array(t, n);
-	ARRAY_SHR(a, idx, n->nchild);
-	ARRAY_SHR(n->child, idx, n->nchild);
+	ARRAY_SHIFT(a, idx + 1, idx, n->nchild);
+	ARRAY_SHIFT(n->child, idx + 1, idx, n->nchild);
 	a[idx] = k;
 	n->child[idx] = child;
 	n->nchild++;
@@ -185,6 +180,7 @@ void ctrie_init(struct ctrie *t, size_t data_size)
 {
 	t->data_size = data_size;
 	t->fake_root = insert_child(t, new_node(t, 1), '\0', new_node(t, 0));
+	t->fake_root->child[0]->flags |= F_WORD;
 }
 
 static void delete_node(struct ctnode *n)
@@ -201,10 +197,20 @@ void ctrie_free(struct ctrie *t)
 	delete_node(t->fake_root);
 }
 
-static struct ctnode *find(struct ctrie *t, char *key)
+/*
+ * Find node with key `key` in trie `t`. If found, the node is returned, `*p`
+ * is set to the parent of the returned node, `*pp` is set to the parent of `*p`
+ * and `*idx` is set so that `(*p)->child[*idx]` is the returned node.
+ *
+ * If the node isn't found, NULL is returned and the value of `*p`, `*pp` and
+ * `*idx` is undefined.
+ */
+static struct ctnode *find2(struct ctrie *t, char *key, struct ctnode **p, struct ctnode **pp, size_t *idx)
 {
 	struct ctnode *n = t->fake_root->child[0];
 	struct ctnode *wild = NULL;
+	*pp = *p = NULL;
+	size_t idx2;
 	while (n) {
 		char *l;
 		for (l = get_label(n); *key && *key == *l; l++, key++);
@@ -214,9 +220,23 @@ static struct ctnode *find(struct ctrie *t, char *key)
 			return n->flags & F_WORD ? n : wild;
 		if (n->flags & F_WILD)
 			wild = n;
-		n = find_child(t, n, *key++);
+		*pp = *p;
+		*p = n;
+		char k = *key++;
+		idx2 = find_child_idx(t, n, k);
+		if (idx2 >= n->nchild || char_array(t, n)[idx2] != k)
+			break;
+		n = n->child[idx2];
+		*idx = idx2;
 	}
 	return wild;
+}
+
+static struct ctnode *find(struct ctrie *t, char *key)
+{
+	struct ctnode *p, *pp;
+	size_t idx;
+	return find2(t, key, &p, &pp, &idx);
 }
 
 void *ctrie_find(struct ctrie *t, char *key)
@@ -237,7 +257,11 @@ static void ctrie_print_node(struct ctrie *t, struct ctnode *n, size_t level)
 		struct ctnode *c = n->child[i];
 		for (size_t j = 0; j < 4 * level; j++)
 			putchar(' ');
-		printf("[%c]->'%s' size=%i alloc=%zuB <", a[i], get_label(c), c->size, alloc_size(t, c->size));
+		printf("[%c]->'%s' size=%i alloc=%zuB <",
+			a[i],
+			get_label(c),
+			c->size,
+			alloc_size(t, c->size));
 		if (c->flags & F_WORD)
 			putchar('W');
 		if (!(c->flags & F_SEPL))
@@ -292,4 +316,59 @@ void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
 	if (wildcard)
 		n->flags |= F_WILD;
 	return data(t, n);
+}
+
+/*
+ * Cut node `n` from trie `t`, where `p` is the parent of `n`.
+ */
+void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p)
+{
+	assert(p->nchild == 1);
+	assert(p->child[0] == n);
+	assert(n->nchild == 1);
+	assert(!(n->flags & F_WORD));
+	struct ctnode *c = n->child[0];
+	char *label_n = get_label(n);
+	char *label_c = get_label(c);
+	size_t label_n_len = strlen(label_n);
+	size_t label_c_len = strlen(label_c);
+	size_t label_len = label_n_len + 1 + label_c_len + 1;
+	char label[label_len];
+	/* TODO avoid double-copying the string */
+	memcpy(label, label_n, label_n_len);
+	label[label_n_len] = char_array(t, n)[0];
+	memcpy(label + label_n_len + 1, label_c, label_c_len);
+	label[label_len] = '\0';
+	set_label(c, label);
+	p->child[0] = c;
+	if (n->flags & F_SEPL)
+		free(get_label(n));
+	free(n);
+}
+
+void ctrie_remove(struct ctrie *t, char *key)
+{
+	struct ctnode *p, *pp;
+	size_t idx;
+	struct ctnode *n = find2(t, key, &p, &pp, &idx);
+	if (!n)
+		return; /* TODO indicate error */
+	assert(n->flags & F_WORD);
+	n->flags &= ~F_WORD;
+	if (n->nchild > 1)
+		return; /* `n` is a branching point, nothing else to do */
+	if (n->nchild) {
+		cut(t, n, p);
+		return;
+	}
+	/* `n` is a leaf node */
+	assert(p->child[idx] == n);
+	if (n->flags & F_SEPL)
+		free(get_label(n));
+	free(n);
+	assert(p->nchild > 1 || p->flags & F_WORD);
+	ARRAY_SHIFT(p->child, idx, idx + 1, p->nchild);
+	p->nchild--;
+	if (p->nchild == 1 && !(p->flags & F_WORD))
+		cut(t, p, pp);
 }
