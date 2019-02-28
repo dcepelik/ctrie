@@ -323,8 +323,13 @@ void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
  */
 void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p)
 {
-	assert(p->nchild == 1);
-	assert(p->child[0] == n);
+	// TODO get rid of this O(n) scan
+	size_t idx;
+	for (idx = 0; idx < p->nchild; idx++)
+		if (p->child[idx] == n)
+			break;
+	assert(p->nchild >= 1);
+	assert(p->child[idx] == n);
 	assert(n->nchild == 1);
 	assert(!(n->flags & F_WORD));
 	struct ctnode *c = n->child[0];
@@ -338,9 +343,9 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p)
 	memcpy(label, label_n, label_n_len);
 	label[label_n_len] = char_array(t, n)[0];
 	memcpy(label + label_n_len + 1, label_c, label_c_len);
-	label[label_len] = '\0';
+	label[label_len - 1] = '\0';
 	set_label(c, label);
-	p->child[0] = c;
+	p->child[idx] = c;
 	if (n->flags & F_SEPL)
 		free(get_label(n));
 	free(n);
@@ -351,6 +356,7 @@ void ctrie_remove(struct ctrie *t, char *key)
 	struct ctnode *p, *pp;
 	size_t idx;
 	struct ctnode *n = find2(t, key, &p, &pp, &idx);
+	assert(n != NULL);
 	if (!n)
 		return; /* TODO indicate error */
 	assert(n->flags & F_WORD);
@@ -362,12 +368,13 @@ void ctrie_remove(struct ctrie *t, char *key)
 		return;
 	}
 	/* `n` is a leaf node */
+	assert(p->nchild > 1 || p->flags & F_WORD);
 	assert(p->child[idx] == n);
+	ARRAY_SHIFT(p->child, idx, idx + 1, p->nchild);
+	ARRAY_SHIFT(char_array(t, p), idx, idx + 1, p->nchild);
 	if (n->flags & F_SEPL)
 		free(get_label(n));
 	free(n);
-	assert(p->nchild > 1 || p->flags & F_WORD);
-	ARRAY_SHIFT(p->child, idx, idx + 1, p->nchild);
 	p->nchild--;
 	if (p->nchild == 1 && !(p->flags & F_WORD))
 		cut(t, p, pp);
@@ -378,14 +385,6 @@ struct crumb
 	struct ctnode *n;
 	size_t idx;
 	size_t key_len;
-};
-
-struct ctrie_iter
-{
-	struct ctrie *t;
-	struct crumb *crumbs;
-	size_t crumbs_size;
-	size_t ncrumbs;
 };
 
 #define ITER_CRUMBS_INIT_SIZE 4
@@ -406,25 +405,42 @@ static struct crumb *push_crumb(struct ctrie_iter *it, struct ctnode *n)
 void ctrie_iter_init(struct ctrie *t, struct ctrie_iter *it)
 {
 	it->t = t;
+	it->key = NULL;
+	it->key_size = it->key_len = 0;
 	it->crumbs = NULL;
 	it->crumbs_size = it->ncrumbs = 0;
 	push_crumb(it, t->fake_root->child[0])->key_len = 0;
 }
 
-struct ctnode *ctrie_iter_next(struct ctrie_iter *it)
+struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key)
 {
 	struct crumb *c;
 	struct ctnode *n;
+	size_t l;
 	while (it->ncrumbs) {
 		c = &it->crumbs[it->ncrumbs - 1];
 		c->idx++;
 		if (c->idx < c->n->nchild) {
+			char ch = char_array(it->t, c->n)[c->idx];
 			n = c->n->child[c->idx];
+			char *label = get_label(n);
+			l = c->key_len + 1 + strlen(label);
+			if (l >= it->key_size) {
+				it->key_size = 2 * MAX(l, it->key_size);
+				it->key = realloc(it->key, it->key_size + 1);
+			}
+			it->key[c->key_len] = ch;
+			memcpy(it->key + c->key_len + 1, label, strlen(label));
+			it->key_len = l;
+			it->key[l] = '\0';
+			*key = it->key;
 			if (n->nchild)
-				push_crumb(it, n)->key_len = 0;
-			return n;
+				push_crumb(it, n)->key_len = l;
+			if (n->flags & F_WORD)
+				return n;
+		} else {
+			it->ncrumbs--;
 		}
-		it->ncrumbs--;
 	}
 	return NULL;
 }

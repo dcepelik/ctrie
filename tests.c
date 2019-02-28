@@ -6,10 +6,17 @@
 #include <string.h>
 #include <time.h>
 
-#define KEY_MAX_LEN        11
+#define KEY_MAX_LEN        6
 #define LONG_KEY_TEST_SIZE 1024
 #define ENGLISH_WORD_MAX   45
 #define WORDS_FILE         "words.txt"
+
+static void rst(char k[KEY_MAX_LEN])
+{
+	for (size_t i = 0; i < KEY_MAX_LEN; i++)
+		k[i] = 'a';
+	k[KEY_MAX_LEN] = '\0';
+}
 
 int inc(char k[KEY_MAX_LEN])
 {
@@ -24,9 +31,29 @@ int inc(char k[KEY_MAX_LEN])
 
 static void test_iter_seq(void)
 {
+	struct ctrie t;
+	char key[KEY_MAX_LEN + 1];
+	ctrie_init(&t, 0);
+	rst(key);
+	do {
+		ctrie_insert(&t, key, false);
+	} while (inc(key));
+
+	struct ctrie_iter it;
+	ctrie_iter_init(&t, &it);
+
+	rst(key);
+	struct ctnode *n;
+	char *got_key;
+	int more;
+	while ((n = ctrie_iter_next(&it, &got_key))) {
+		assert(!strcmp(key, got_key));
+		more = inc(key);
+	}
+	assert(!more);
 }
 
-static void test_seq(void)
+static void test_insert_seq(void)
 {
 	struct ctrie a, b;
 	char key[KEY_MAX_LEN + 1];
@@ -64,7 +91,7 @@ static void test_seq(void)
 	ctrie_free(&b);
 }
 
-static void test_long_keys(void)
+static void test_insert_long_keys(void)
 {
 	struct ctrie t;
 	char key[KEY_MAX_LEN];
@@ -83,7 +110,7 @@ static void test_long_keys(void)
 	ctrie_free(&t);
 }
 
-static void test_english_words(void)
+static void test_insert_english(void)
 {
 	struct ctrie t;
 	FILE *words;
@@ -107,7 +134,7 @@ static void test_english_words(void)
 	}
 	fseek(words, SEEK_SET, 0);
 	while ((len = getline(&word, &word_size, words)) > 0) {
-		word[len - 1] = '\0'; /* trim the new-line */
+		word[len - 1] = '\0'; /* strip trailing newline */
 		assert(ctrie_contains(&t, word));
 		d = ctrie_find(&t, word);
 		assert(strcmp(d, word) == 0);
@@ -117,32 +144,60 @@ static void test_english_words(void)
 	ctrie_free(&t);
 }
 
+/*
+ * Test removal of sequential keys. Keys are removed in the order in which they
+ * were inserted.
+ *
+ * This test constructs two sets of keys `a` and `b`, which are disjoint. The
+ * union of these two sets is precisely `c`. In each step, one key is removed
+ * from `a` and inserted into `b`. Then, we check that the relationships above
+ * still hold, which is equivalent to: all deleted keys were removed from `a`
+ * and all non-deleted keys are still present in `a`.
+ */
 static void test_remove_seq(void)
 {
-	struct ctrie a, b;
+	struct ctrie a, b, c;
 	char key[KEY_MAX_LEN + 1];
 
 	ctrie_init(&a, 0);
+	ctrie_init(&c, 0);
+	ctrie_init(&b, 0);
 
-	for (size_t i = 0; i < KEY_MAX_LEN; i++)
-		key[i] = 'a';
-	key[KEY_MAX_LEN] = '\0';
-
+	rst(key);
 	do {
 		ctrie_insert(&a, key, false);
-		assert(ctrie_contains(&a, key));
+		ctrie_insert(&c, key, false);
+	} while (inc(key));
+
+	struct ctrie_iter it;
+	struct ctnode *n;
+	char *got_key;
+	rst(key);
+	do {
 		ctrie_remove(&a, key);
 		assert(!ctrie_contains(&a, key));
+		ctrie_insert(&b, key, false);
+		/* check that no deleted key is found */
+		ctrie_iter_init(&b, &it);
+		while (ctrie_iter_next(&it, &got_key))
+			assert(!ctrie_contains(&a, got_key));
+		ctrie_iter_free(&it);
+		/* check that all non-deleted keys are still found */
+		ctrie_iter_init(&c, &it);
+		while (ctrie_iter_next(&it, &got_key))
+			if (!ctrie_contains(&b, got_key))
+				assert(ctrie_contains(&a, got_key));
+		ctrie_iter_free(&it);
 	} while (inc(key));
 }
 
 int main(void)
 {
 	srand(time(NULL));
-	test_iter_seq();
-	test_seq();
-	test_long_keys();
-	test_english_words();
+	//test_iter_seq();
+	//test_insert_seq();
+	//test_insert_long_keys();
+	//test_insert_english();
 	test_remove_seq();
 	return EXIT_SUCCESS;
 }

@@ -64,4 +64,19 @@ void ctrie_dump(struct ctrie *t);
  */
 void ctrie_free(struct ctrie *t);
 
+
+struct ctrie_iter
+{
+	struct ctrie *t;
+	struct crumb *crumbs;
+	size_t crumbs_size;
+	size_t ncrumbs;
+	char *key;
+	size_t key_size;
+	size_t key_len;
+};
+void ctrie_iter_init(struct ctrie *t, struct ctrie_iter *it);
+struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key);
+void ctrie_iter_free(struct ctrie_iter *it);
+
 #endif
