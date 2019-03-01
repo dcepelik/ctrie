@@ -194,10 +194,10 @@ static void test_remove_seq(void)
 int main(void)
 {
 	srand(time(NULL));
-	//test_iter_seq();
-	//test_insert_seq();
-	//test_insert_long_keys();
-	//test_insert_english();
+	test_iter_seq();
+	test_insert_seq();
+	test_insert_long_keys();
+	test_insert_english();
 	test_remove_seq();
 	return EXIT_SUCCESS;
 }
