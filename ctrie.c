@@ -194,49 +194,81 @@ static void delete_node(struct ctnode *n)
 
 void ctrie_free(struct ctrie *t)
 {
+	return;
 	delete_node(t->fake_root);
 }
 
 /*
- * Find node with key `key` in trie `t`. If found, the node is returned, `*p`
- * is set to the parent of the returned node, `*pp` is set to the parent of `*p`
- * and `*idx` is set so that `(*p)->child[*idx]` is the returned node.
+ * Find a node with key `key` in trie `t` and its two immediate predecessors.
  *
- * If the node isn't found, NULL is returned and the value of `*p`, `*pp` and
- * `*idx` is undefined.
+ * If node with the given key is found, it's returned and `*p` points to the
+ * returned node's parent, `*pi` is the returned node's index in the child
+ * array of `*p`, `*pp` is the parent of `*p` and `*ppi` is the index of `*p`
+ * in the child array of `*pp`.
+ *
+ * If there's no node with the given key if `t`, but a wild-card node is
+ * encountered during the search descent, last such node will be returned and
+ * `*p`, `*pi`, `*pp` and `*ppi` will be set accordingly.
+ *
+ * If the node is not found, `NULL` is returned and the value of `*p`, `*pi`,
+ * `*pp` and `*ppi` is undefined.
+ *
+ * The reason we need this method (with two immediate predecessors returned
+ * alongside the node) is that we don't keep parent pointers in the nodes of
+ * the trie to conserve space. Since all operations on `t` require at most the
+ * grand-parent of modified node, this seems reasonable.
  */
-static struct ctnode *find2(struct ctrie *t, char *key, struct ctnode **p, struct ctnode **pp, size_t *idx)
+static inline struct ctnode *find3(struct ctrie *t, char *key,
+	struct ctnode **pp, size_t *ppi, struct ctnode **p, size_t *pi)
 {
+	*ppi = *pi = 0;
+	*pp = NULL;
+	*p = t->fake_root;
+	struct ctnode *w = NULL, *wp = *p, *wpp = *pp;
+	size_t wpi, wppi;
 	struct ctnode *n = t->fake_root->child[0];
-	struct ctnode *wild = NULL;
-	*pp = *p = NULL;
-	size_t idx2;
 	while (n) {
 		char *l;
 		for (l = get_label(n); *key && *key == *l; l++, key++);
 		if (*l) /* label mismatch */
-			return wild;
-		if (!*key) /* key matched current node */
-			return n->flags & F_WORD ? n : wild;
-		if (n->flags & F_WILD)
-			wild = n;
+			break;
+		if (!*key) { /* key matched current node */
+			if (n->flags & F_WORD)
+				return n;
+			break;
+		}
+		if (n->flags & F_WILD) {
+			/* save the wild node and current search state */
+			w = n;
+			wpp = *pp;
+			wppi = *ppi;
+			wp = *p;
+			wpi = *pi;
+		}
 		*pp = *p;
+		*ppi = *pi;
 		*p = n;
 		char k = *key++;
-		idx2 = find_child_idx(t, n, k);
-		if (idx2 >= n->nchild || char_array(t, n)[idx2] != k)
+		*pi = find_child_idx(t, n, k);
+		if (*pi >= n->nchild || char_array(t, n)[*pi] != k)
 			break;
-		n = n->child[idx2];
-		*idx = idx2;
+		n = (*p)->child[*pi];
+		assert((*pp)->child[*ppi] == *p);
+		assert((*p)->child[*pi] == n);
 	}
-	return wild;
+	/* return last wild-card node encountered during the search (if any) */
+	*pp = wpp;
+	*ppi = wppi;
+	*p = wp;
+	*pi = wpi;
+	return w;
 }
 
 static struct ctnode *find(struct ctrie *t, char *key)
 {
 	struct ctnode *p, *pp;
-	size_t idx;
-	return find2(t, key, &p, &pp, &idx);
+	size_t pi, ppi;
+	return find3(t, key, &pp, &ppi, &p, &pi);
 }
 
 void *ctrie_find(struct ctrie *t, char *key)
@@ -319,17 +351,14 @@ void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
 }
 
 /*
- * Cut node `n` from trie `t`, where `p` is the parent of `n`.
+ * Cut node `n` from trie `t`, where `p` is the parent of `n`. This assumes
+ * that `n` has only a single child and `n` is not a word node, i.e. it can
+ * be merged with its only child.
  */
-void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p)
+void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 {
-	// TODO get rid of this O(n) scan
-	size_t idx;
-	for (idx = 0; idx < p->nchild; idx++)
-		if (p->child[idx] == n)
-			break;
 	assert(p->nchild >= 1);
-	assert(p->child[idx] == n);
+	assert(p->child[pi] == n);
 	assert(n->nchild == 1);
 	assert(!(n->flags & F_WORD));
 	struct ctnode *c = n->child[0];
@@ -339,64 +368,79 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p)
 	size_t label_c_len = strlen(label_c);
 	size_t label_len = label_n_len + 1 + label_c_len + 1;
 	char label[label_len];
-	/* TODO avoid double-copying the string */
+	/* TODO we're basically double-copying the label - avoid that */
 	memcpy(label, label_n, label_n_len);
 	label[label_n_len] = char_array(t, n)[0];
 	memcpy(label + label_n_len + 1, label_c, label_c_len);
 	label[label_len - 1] = '\0';
 	set_label(c, label);
-	p->child[idx] = c;
+	p->child[pi] = c;
 	if (n->flags & F_SEPL)
-		free(get_label(n));
+		free(label_n);
 	free(n);
 }
 
-void ctrie_remove(struct ctrie *t, char *key)
+int ctrie_remove(struct ctrie *t, char *key)
 {
-	struct ctnode *p, *pp;
-	size_t idx;
-	struct ctnode *n = find2(t, key, &p, &pp, &idx);
+	struct ctnode *pp, *p;
+	size_t ppi, pi;
+	struct ctnode *n = find3(t, key, &pp, &ppi, &p, &pi);
 	assert(n != NULL);
 	if (!n)
-		return; /* TODO indicate error */
+		return -1; /* TODO indicate error */
 	assert(n->flags & F_WORD);
 	n->flags &= ~F_WORD;
 	if (n->nchild > 1)
-		return; /* `n` is a branching point, nothing else to do */
+		return 0; /* `n` is a branching point, nothing else to do */
 	if (n->nchild) {
-		cut(t, n, p);
-		return;
+		cut(t, n, p, pi);
+		return 0;
 	}
 	/* `n` is a leaf node */
 	assert(p->nchild > 1 || p->flags & F_WORD);
-	assert(p->child[idx] == n);
-	ARRAY_SHIFT(p->child, idx, idx + 1, p->nchild);
-	ARRAY_SHIFT(char_array(t, p), idx, idx + 1, p->nchild);
+	assert(p->child[pi] == n);
+	ARRAY_SHIFT(p->child, pi, pi + 1, p->nchild);
+	ARRAY_SHIFT(char_array(t, p), pi, pi + 1, p->nchild);
 	if (n->flags & F_SEPL)
 		free(get_label(n));
 	free(n);
 	p->nchild--;
 	if (p->nchild == 1 && !(p->flags & F_WORD))
-		cut(t, p, pp);
+		cut(t, p, pp, ppi);
+	return 0;
 }
 
-struct crumb
+/*
+ * Array growing helper. Ensure that the array `a` of `sizeof(*a)`-sized items
+ * with current capacity `cap` can hold `size + 1` items (i.e., is not full).
+ * If `size` has reached `a`'s capacity limit, use `realloc(3)` to resize the
+ * array to at least twice current capacity.
+ */
+#define AGROW(a, size, cap) do { \
+	if ((size) >= (cap)) { \
+		(cap) = MAX(size, MAX(1, 2 * (cap))); \
+		(a) = realloc((a), (cap) * sizeof(*(a))); \
+	} \
+} while (0)
+
+/*
+ * Iterator stack entry. Together, these objects hold the entire iteration state
+ * of the associated iterator.
+ */
+struct ctrie_iter_stkent
 {
-	struct ctnode *n;
-	size_t idx;
-	size_t key_len;
+	struct ctnode *n; /* node that this entry describes */
+	size_t idx;       /* current child index in `n` */
+	size_t key_len;   /* length of `n`'s key */
 };
 
-#define ITER_CRUMBS_INIT_SIZE 4
-
-static struct crumb *push_crumb(struct ctrie_iter *it, struct ctnode *n)
+/*
+ * Push and return new stack entry for node `n` onto the stack of iterator `it`.
+ */
+static struct ctrie_iter_stkent *push(struct ctrie_iter *it, struct ctnode *n)
 {
-	if (it->ncrumbs == it->crumbs_size) {
-		it->crumbs_size = MAX(ITER_CRUMBS_INIT_SIZE, 2 * it->crumbs_size);
-		it->crumbs = realloc(it->crumbs, it->crumbs_size * sizeof(*it->crumbs));
-		assert(it->crumbs);
-	}
-	struct crumb *c = &it->crumbs[it->ncrumbs++];
+	AGROW(it->stack, it->nstack, it->stack_size);
+	struct ctrie_iter_stkent *c = &it->stack[it->nstack++];
 	c->n = n;
 	c->idx = -1;
 	return c;
@@ -405,47 +449,42 @@ static struct crumb *push_crumb(struct ctrie_iter *it, struct ctnode *n)
 void ctrie_iter_init(struct ctrie *t, struct ctrie_iter *it)
 {
 	it->t = t;
-	it->key = NULL;
-	it->key_size = it->key_len = 0;
-	it->crumbs = NULL;
-	it->crumbs_size = it->ncrumbs = 0;
-	push_crumb(it, t->fake_root->child[0])->key_len = 0;
+	it->stack = NULL;
+	it->stack_size = it->nstack = 0;
+	push(it, t->fake_root->child[0])->key_len = 0;
 }
 
-struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key)
+struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *key_size)
 {
-	struct crumb *c;
+	struct ctrie_iter_stkent *se;
 	struct ctnode *n;
-	size_t l;
-	while (it->ncrumbs) {
-		c = &it->crumbs[it->ncrumbs - 1];
-		c->idx++;
-		if (c->idx < c->n->nchild) {
-			char ch = char_array(it->t, c->n)[c->idx];
-			n = c->n->child[c->idx];
-			char *label = get_label(n);
-			l = c->key_len + 1 + strlen(label);
-			if (l >= it->key_size) {
-				it->key_size = 2 * MAX(l, it->key_size);
-				it->key = realloc(it->key, it->key_size + 1);
-			}
-			it->key[c->key_len] = ch;
-			memcpy(it->key + c->key_len + 1, label, strlen(label));
-			it->key_len = l;
-			it->key[l] = '\0';
-			*key = it->key;
-			if (n->nchild)
-				push_crumb(it, n)->key_len = l;
-			if (n->flags & F_WORD)
-				return n;
-		} else {
-			it->ncrumbs--;
+	size_t key_len;
+	size_t label_len;
+	while (it->nstack) {
+		se = &it->stack[it->nstack - 1];
+		se->idx++;
+		if (se->idx >= se->n->nchild) {
+			it->nstack--;
+			continue;
 		}
+		char c = char_array(it->t, se->n)[se->idx];
+		n = se->n->child[se->idx];
+		char *label = get_label(n);
+		label_len = strlen(label);
+		key_len = se->key_len + 1 + label_len;
+		AGROW(*key, key_len + 1, *key_size);
+		(*key)[se->key_len] = c;
+		memcpy(*key + se->key_len + 1, label, label_len);
+		(*key)[key_len] = '\0';
+		if (n->nchild)
+			push(it, n)->key_len = key_len;
+		if (n->flags & F_WORD)
+			return n;
 	}
 	return NULL;
 }
 
 void ctrie_iter_free(struct ctrie_iter *it)
 {
-	free(it->crumbs);
+	free(it->stack);
 }
