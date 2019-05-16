@@ -31,3 +31,7 @@ e.g. `foobar` or `foobarbaz`.
 
  - David Čepelík
  - Ondřej Hrubý
+
+## LICENSE
+
+MIT
