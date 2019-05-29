@@ -401,13 +401,13 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 	char *label_c = get_label(c);
 	size_t label_n_len = n->label_len;
 	size_t label_c_len = c->label_len;
-	size_t label_len = label_n_len + 1 + label_c_len + 1;
+	size_t label_len = label_n_len + 1 + label_c_len;
 	char label[label_len];
 	/* TODO we're basically double-copying the label - avoid that */
 	memcpy(label, label_n, label_n_len);
 	label[label_n_len] = char_array(t, n)[0];
 	memcpy(label + label_n_len + 1, label_c, label_c_len);
-	set_label(c, label, label_len - 1);
+	set_label(c, label, label_len);
 	p->child[pi] = c;
 	if (n->flags & F_SEPL)
 		free(label_n);
@@ -505,7 +505,7 @@ struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *key_si
 		char *label = get_label(n);
 		label_len = n->label_len;
 		*key_len = se->key_len + 1 + label_len;
-		AGROW(*key, *key_len + 1, *key_size);
+		AGROW(*key, *key_len, *key_size);
 		(*key)[se->key_len] = c;
 		memcpy(*key + se->key_len + 1, label, label_len);
 		if (n->nchild)
