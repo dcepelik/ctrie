@@ -191,6 +191,7 @@ static void test_remove_seq(void)
 	} while (inc(key));
 }
 
+size_t ceil2(size_t n);
 int main(void)
 {
 	srand(time(NULL));

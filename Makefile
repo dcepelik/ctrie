@@ -6,7 +6,7 @@ SRCS := ctrie.c tests.c
 
 all: $(BIN) $(ASM)
 
-CFLAGS += -ggdb3 -std=gnu11 -Wall -Werror --pedantic -O3
+CFLAGS += -ggdb3 -std=gnu11 -Wall -Werror --pedantic -O3 -Wno-unused-function
 
 $(BIN): ctrie.c tests.c Makefile
 	$(CC) $(CFLAGS) -o $@ $(SRCS)

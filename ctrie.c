@@ -10,6 +10,8 @@
  * - ~~Don't assume C strings, use explicit label length <= 255 B everywhere.~~
  * - ~~Add tests which do not use C strings (seq tests, random tests).~~
  * - Don't allocate label externally, resize the node to fit the label.
+ * - Don't store allocation capacity, it can be calculated from nchild && invariants.
+ * - Make sure that under all circumstances, allocation overhead is at most 4x.
  * - Don't allocate data everywhere (only for F_WORD nodes).
  * - Change the topology of the structure towards the new one:
  *   
@@ -24,6 +26,15 @@
  * - Extend API to support C strings nicely. (Or maybe not; not sure.)
  * - Lift 255 B label restriction.
  * - Refactoring and clean-up.
+ *
+ * Insertion
+ *   Split      (parent->n, n's label gets shorter; realloc n?)
+ *   New        (precise allocation, parent gets new child; realloc if full due to children increase)
+ *   Flags only (no change)
+ * Removal
+ *   Merge      (realloc only child of removed node due to label extension?)
+ *   Delete     (deleted w/ label, parent free space increased; realloc due to children decrease if <= .25)
+ *   Flags only (no change)
  */
 
 #define MAX(a, b)      ((a) >= (b) ? (a) : (b))
@@ -39,20 +50,12 @@ typedef unsigned char  byte_t;
  */
 enum
 {
-	F_USER = 1 << 0, /* user-defined boolean flag */
-	F_WORD = 1 << 1, /* it's a word */
-	F_WILD = 1 << 2, /* it's a prefix wild-card */
-	F_SEPL = 1 << 3, /* label allocated separately, use `lptr` */
-	F_SEPD = 1 << 4, /* data allocated separately */
+	F_USER   = 1 << 0, /* user-defined boolean flag */
+	F_WORD   = 1 << 1, /* it's a word */
+	F_WILD   = 1 << 2, /* it's a prefix wild-card */
+	F_SEPD   = 1 << 4, /* data allocated separately */
+	F_SHRUNK = 1 << 5, /* the node is shrunk (TODO) */
 };
-
-/*
- * Size of the `label` field in the `ctnode` structure. This must be enough to
- * hold a `char *`. If the label is shorter than this value, it will be
- * embedded in the field directly, thus saving the overhead of having to create
- * a heap copy of the string.
- */
-#define LABEL_SIZE 12
 
 typedef byte_t        label_len_t;
 #define LABEL_LEN_MAX 255
@@ -66,19 +69,18 @@ typedef byte_t        label_len_t;
  * The node itself is capable of storing `size` children at any given moment.
  * It is resized to fulfil storage requirements as they change. This ensures
  * that the trie is reasonably compact at all times.
+ * | L | F | S | N | label... | ...chars... |8 child |>=8 data |
  */
 struct ctnode
 {
-	label_len_t label_len;   /* length of label (in bytes) */
-	char label[LABEL_SIZE];  /* short-enough label or a pointer to a label */
-	byte_t flags;            /* various flags */
-	byte_t size;             /* capacity of the `child` array */
-	byte_t nchild;           /* number of children */
-	struct ctnode *child[];  /* child pointers start here */
+	label_len_t label_len;  /* length of label (in bytes) */
+	label_len_t label_size; /* size of label (in bytes) */
+	byte_t flags;           /* various flags */
+	byte_t size;            /* capacity of the `child` array */
+	byte_t nchild;          /* number of children */
+	char *label;            /* pointer to a label (TODO refactoring helper) */
+	struct ctnode *child[]; /* child pointers start here */
 };
-
-_Static_assert(sizeof(char *) <= LABEL_SIZE,
-	"LABEL_SIZE too small to hold a char *, please increase");
 
 /*
  * Return pointer to the label of node `n`. This is either pointer to the
@@ -87,7 +89,7 @@ _Static_assert(sizeof(char *) <= LABEL_SIZE,
  */
 static char *get_label(struct ctnode *n)
 {
-	return (n->flags & F_SEPL) ? *(char **)&n->label : n->label;
+	return n->label;
 }
 
 /*
@@ -98,36 +100,45 @@ static char *get_label(struct ctnode *n)
 static void set_label(struct ctnode *n, char *label, size_t label_len)
 {
 	char *old_label = get_label(n);
-	bool need_free = (n->flags & F_SEPL);
-	TODO_ASSERT(label_len <= LABEL_LEN_MAX);
-	if (label_len < sizeof(n->label)) {
-		n->flags &= ~F_SEPL;
-		memmove(n->label, label, label_len);
-	} else {
-		n->flags |= F_SEPL;
-		*(char **)&n->label = strdup(label);
-	}
-	if (need_free) /* freeing here because label can point into old_label */
-		free(old_label);
+	n->label = malloc(label_len);
+	memcpy(n->label, label, label_len);
+	free(old_label); /* freeing here because label can point into old_label */
 	n->label_len = label_len;
 }
 
 /*
- * Return the number of bytes needed to allocate a node with size `size`.
+ * Return the number of bytes needed to allocate a node with size `s` and label
+ * size `l`.
  */
-static size_t alloc_size(struct ctrie *t, size_t size)
+static size_t alloc_size(struct ctrie *t, size_t s, size_t l)
 {
-	size_t ptrs = size * sizeof(struct ctnode *);
-	size_t chars = size;
-	return sizeof(struct ctnode) + ptrs + t->data_size + chars;
+	size_t ptrs = s * sizeof(struct ctnode *);
+	size_t chars = s;
+	size_t label = 0; // TODO
+	return sizeof(struct ctnode) + ptrs + t->data_size + chars + label;
 }
+
+//static size_t ceil2(size_t n)
+//{
+//	n--;  
+//	n |= n >> 1;  
+//	n |= n >> 2;  
+//	n |= n >> 4;  
+//	n++;  
+//	return n;
+//}
+//
+//static size_t size(struct ctnode *n)
+//{
+//	return ceil2(n->nchild);
+//}
 
 /*
  * Return a pointer to the character array of the node `n`.
  */
 static char *char_array(struct ctrie *t, struct ctnode *n)
 {
-	return (char *)((byte_t *)n + alloc_size(t, n->size) - n->size);
+	return (char *)((byte_t *)n + alloc_size(t, n->size, n->label_len) - n->size);
 }
 
 static struct ctnode **child_array(struct ctrie *t, struct ctnode *n)
@@ -143,35 +154,43 @@ static void *data(struct ctrie *t, struct ctnode *n)
 	return (void *)(char_array(t, n) - t->data_size);
 }
 
-/*
- * Resize the node `n` to size `new_size`.
- */
-static struct ctnode *resize(struct ctrie *t, struct ctnode *n, size_t new_size)
+static struct ctnode *resize(struct ctrie *t, struct ctnode *n, size_t s, size_t l)
 {
 	assert(n != NULL);
-	n = realloc(n, alloc_size(t, new_size));
-	assert(n != NULL);
 	size_t old_size = n->size;
+	n = realloc(n, alloc_size(t, s, l));
+	assert(n != NULL);
 	void *old = data(t, n);
-	n->size = new_size;
+	n->size = s;
 	/* copy both data and the char array to the new node */
 	memmove(data(t, n), old, t->data_size + old_size);
 	return n;
 }
 
-/*
- * Allocate a new node, making sure that its initial size will be
- * at least `min_size`, i.e. that `min_size` children can subsequently
- * be inserted without the need to reallocate the node.
- */
-static struct ctnode *new_node(struct ctrie *t, size_t min_size)
+static struct ctnode *resize_if_needed(struct ctrie *t, struct ctnode *n, size_t s, size_t l)
 {
-	size_t size = MAX(min_size, NODE_INIT_SIZE);
-	struct ctnode *n = malloc(alloc_size(t, size));
+	assert(s <= 255);
+	assert(l <= 255);
+	/* TODO shrink too */
+	if (l <= n->label_len && s <= n->size)
+		return n;
+	if (l > n->label_len)
+		l = MIN(255, MAX(l, MAX(2 * n->label_len, 1)));
+	if (s > n->size)
+		s = MIN(255, MAX(s, MAX(2 * n->size, 1)));
+	return resize(t, n, s, l);
+}
+
+static struct ctnode *new_node(struct ctrie *t, size_t s, size_t l)
+{
+	s = MAX(s, NODE_INIT_SIZE);
+	struct ctnode *n = malloc(alloc_size(t, s, l));
 	n->nchild = 0;
-	n->size = size;
 	n->flags = 0;
+	n->label = NULL;
 	n->label_len = 0;
+	n->label_size = l;
+	n->size = s;
 	return n;
 }
 
@@ -192,13 +211,11 @@ static size_t find_child_idx(struct ctrie *t, struct ctnode *n, char k)
 #define ARRAY_SHIFT(a, j, i, size) \
 	memmove((a) + (j), (a) + (i), ((size) - (i)) * sizeof(*(a)))
 
-static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, struct ctnode *child)
+static void insert_child(struct ctrie *t, struct ctnode *n, char k, struct ctnode *child)
 {
-	if (n->size == n->nchild)
-		n = resize(t, n, MAX(1, MIN(2 * n->size, 255)));
+	assert(n->nchild < n->size);
 	size_t idx = find_child_idx(t, n, k);
 	assert(idx < n->size);
-	assert(n->nchild < n->size);
 	char *a = char_array(t, n);
 	ARRAY_SHIFT(a, idx + 1, idx, n->nchild);
 	struct ctnode **c = child_array(t, n);
@@ -206,22 +223,22 @@ static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, st
 	a[idx] = k;
 	c[idx] = child;
 	n->nchild++;
-	return n;
 }
 
 void ctrie_init(struct ctrie *t, size_t data_size)
 {
 	t->data_size = data_size;
-	t->fake_root = insert_child(t, new_node(t, 1), '\0', new_node(t, 0));
-	child_array(t, t->fake_root)[0]->flags |= F_WORD;
+	t->fake_root = new_node(t, 1, 0);
+	struct ctnode *root = new_node(t, 0, 0);
+	root->flags |= F_WORD;
+	insert_child(t, t->fake_root, '\0', root);
 }
 
 static void delete_node(struct ctrie *t, struct ctnode *n)
 {
 	for (size_t i = 0; i < n->nchild; i++)
 		delete_node(t, child_array(t, n)[i]);
-	if (n->flags & F_SEPL)
-		free(get_label(n));
+	free(get_label(n));
 	free(n);
 }
 
@@ -328,11 +345,9 @@ static void ctrie_print_node(struct ctrie *t, struct ctnode *n, size_t level)
 			a[i],
 			get_label(c), // FIXME get_label(c) is not NUL terminated!
 			c->size,
-			alloc_size(t, c->size));
+			alloc_size(t, c->size, c->label_len));
 		if (c->flags & F_WORD)
 			putchar('W');
-		if (!(c->flags & F_SEPL))
-			putchar('E');
 		if (c->flags & F_WILD)
 			putchar('*');
 		printf(">:\n");
@@ -367,8 +382,8 @@ void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 		idx = next_idx;
 	}
 	if (j < n->label_len) { /* create new node between `parent` and `n`, split label */
-		struct ctnode *s = new_node(t, 1);
-		s = insert_child(t, s, l[j], n); /* won't trigger resize */
+		struct ctnode *s = new_node(t, 1, j);
+		insert_child(t, s, l[j], n); /* won't trigger resize */
 		set_label(s, l, j);
 		j++;
 		child_array(t, parent)[idx] = s;
@@ -376,8 +391,9 @@ void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 		n = s;
 	}
 	if (i < key_len) { /* `n` is a prefix for `key`, prolong the path */
-		struct ctnode *new = new_node(t, 0);
-		n = insert_child(t, n, key[i], new);
+		struct ctnode *new = new_node(t, 0, key_len - i - 1);
+		n = resize_if_needed(t, n, n->nchild + 1, n->label_len);
+		insert_child(t, n, key[i], new);
 		i++;
 		set_label(new, key + i, key_len - i); /* without the first char */
 		child_array(t, parent)[idx] = n;
@@ -413,8 +429,7 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 	memcpy(label + label_n_len + 1, label_c, label_c_len);
 	set_label(c, label, label_len);
 	child_array(t, p)[pi] = c;
-	if (n->flags & F_SEPL)
-		free(label_n);
+	free(label_n);
 	free(n);
 }
 
@@ -439,8 +454,7 @@ int ctrie_remove(struct ctrie *t, char *key, size_t key_len)
 	assert(child_array(t, p)[pi] == n);
 	ARRAY_SHIFT(child_array(t, p), pi, pi + 1, p->nchild);
 	ARRAY_SHIFT(char_array(t, p), pi, pi + 1, p->nchild);
-	if (n->flags & F_SEPL)
-		free(get_label(n));
+	free(get_label(n));
 	free(n);
 	p->nchild--;
 	if (p->nchild == 1 && !(p->flags & F_WORD))
