@@ -4,6 +4,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define TODO_ASSERT(x) assert(x)
+
+/*
+ * - Don't assume C strings, use explicit label length <= 255 B everywhere.
+ * - Add tests which do not use C strings (seq tests, random tests).
+ * - Don't allocate label externally, resize the node to fit the label.
+ * - Don't allocate data everywhere (only for F_WORD nodes).
+ * - Change the topology of the structure towards the new one:
+ *   
+ *       struct ctnode_new {
+ *               label_len_t label_len;
+ *               byte_t hdr;
+ *               byte_t nchild;
+ *               byte_t label[];
+ *       }
+ * - Support node embedding (F_EMBED) and 8 B minimum node size.
+ * - Extend API to support C strings nicely. (Or maybe not; not sure.)
+ * - Lift 255 B label restriction.
+ * - Refactoring and clean-up.
+ */
+
 #define MAX(a, b)      ((a) >= (b) ? (a) : (b))
 #define MIN(a, b)      ((a) <= (b) ? (a) : (b))
 
@@ -30,7 +51,10 @@ enum
  * embedded in the field directly, thus saving the overhead of having to create
  * a heap copy of the string.
  */
-#define LABEL_SIZE 13
+#define LABEL_SIZE 12
+
+typedef byte_t        label_len_t;
+#define LABEL_LEN_MAX 255
 
 /*
  * A trie node, or more precisely its header. In memory, two arrays (possibly
@@ -44,6 +68,7 @@ enum
  */
 struct ctnode
 {
+	label_len_t label_len;   /* length of label (in bytes) */
 	char label[LABEL_SIZE];  /* short-enough label or a pointer to a label */
 	byte_t flags;            /* various flags */
 	byte_t size;             /* capacity of the `child` array */
@@ -69,21 +94,22 @@ static char *get_label(struct ctnode *n)
  * will be copied into the `label` field of the node. If it's longer, create
  * a copy of the string given using `strdup`.
  */
-static void set_label(struct ctnode *n, char *label)
+static void set_label(struct ctnode *n, char *label, size_t label_len)
 {
 	char *old_label = get_label(n);
 	bool need_free = (n->flags & F_SEPL);
-	size_t len = strlen(label);
-	if (len < sizeof(n->label)) {
+	TODO_ASSERT(label_len == strlen(label));
+	if (label_len < sizeof(n->label)) {
 		n->flags &= ~F_SEPL;
-		memmove(n->label, label, len);
-		n->label[len] = '\0';
+		memmove(n->label, label, label_len);
+		n->label[label_len] = '\0';
 	} else {
 		n->flags |= F_SEPL;
 		*(char **)&n->label = strdup(label);
 	}
 	if (need_free) /* freeing here because label can point into old_label */
 		free(old_label);
+	n->label_len = label_len;
 }
 
 /*
@@ -141,6 +167,7 @@ static struct ctnode *new_node(struct ctrie *t, size_t min_size)
 	n->size = size;
 	n->flags = 0;
 	n->label[0] = '\0';
+	n->label_len = 0;
 	return n;
 }
 
@@ -227,12 +254,16 @@ static inline struct ctnode *find3(struct ctrie *t, char *key,
 	struct ctnode *w = NULL, *wp = *p, *wpp = *pp;
 	size_t wpi, wppi;
 	struct ctnode *n = t->fake_root->child[0];
+	size_t ki = 0, li;
+	size_t key_len = strlen(key), l_len;
+	(void) l_len;
 	while (n) {
-		char *l;
-		for (l = get_label(n); *key && *key == *l; l++, key++);
-		if (*l) /* label mismatch */
+		char *l = get_label(n);
+		l_len = strlen(l);
+		for (li = 0; ki < key_len && li < l_len && key[ki] == l[li]; li++, ki++);
+		if (li < l_len) /* label mismatch */
 			break;
-		if (!*key) { /* key matched current node */
+		if (ki >= key_len) { /* key matched current node */
 			if (n->flags & F_WORD)
 				return n;
 			break;
@@ -248,7 +279,8 @@ static inline struct ctnode *find3(struct ctrie *t, char *key,
 		*pp = *p;
 		*ppi = *pi;
 		*p = n;
-		char k = *key++;
+		char k = key[ki];
+		ki++;
 		*pi = find_child_idx(t, n, k);
 		if (*pi >= n->nchild || char_array(t, n)[*pi] != k)
 			break;
@@ -313,34 +345,41 @@ void ctrie_dump(struct ctrie *t)
 void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
 {
 	/* TODO assert key not empty */
-	struct ctnode *n = t->fake_root->child[0], *parent = t->fake_root;
+	struct ctnode *parent = t->fake_root;
+	struct ctnode *n = t->fake_root->child[0];
 	size_t idx = 0;
 	char *l;
+	size_t li, ki = 0;
+	size_t key_len = strlen(key), l_len;
 	while (1) { /* find longest prefix of key in the trie */
-		for (l = get_label(n); *key && *key == *l; l++, key++);
-		if (*l || !*key) /* false for root label and non-empty key */
+		l = get_label(n);
+		l_len = strlen(l);
+		for (li = 0; ki < key_len && li < l_len && key[ki] == l[li]; li++, ki++);
+		if (li < l_len || ki >= key_len) /* false for root label and non-empty key */
 			break;
-		size_t next_idx = find_child_idx(t, n, *key);
-		if (next_idx >= n->nchild || char_array(t, n)[next_idx] != *key)
+		size_t next_idx = find_child_idx(t, n, key[ki]);
+		if (next_idx >= n->nchild || char_array(t, n)[next_idx] != key[ki])
 			break;
-		key++;
+		ki++;
 		parent = n;
 		n = n->child[next_idx];
 		idx = next_idx;
 	}
-	if (*l) { /* create new node between `parent` and `n`, split label */
+	if (li < l_len) { /* create new node between `parent` and `n`, split label */
 		struct ctnode *s = new_node(t, 1);
-		s = insert_child(t, s, *l, n); /* won't trigger resize */
-		*l++ = '\0';
-		set_label(s, get_label(n));
+		s = insert_child(t, s, l[li], n); /* won't trigger resize */
+		l[li] = '\0';
+		li++;
+		set_label(s, get_label(n), strlen(get_label(n)));
 		parent->child[idx] = s;
-		set_label(n, l);
+		set_label(n, l + li, strlen(l + li));
 		n = s;
 	}
-	if (*key) { /* `n` is a prefix for `key`, prolong the path */
+	if (ki < key_len) { /* `n` is a prefix for `key`, prolong the path */
 		struct ctnode *new = new_node(t, 0);
-		n = insert_child(t, n, *key++, new);
-		set_label(new, key); /* without the first char */
+		n = insert_child(t, n, key[ki], new);
+		ki++;
+		set_label(new, key + ki, strlen(key + ki)); /* without the first char */
 		parent->child[idx] = n;
 		n = new;
 	}
@@ -373,7 +412,7 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 	label[label_n_len] = char_array(t, n)[0];
 	memcpy(label + label_n_len + 1, label_c, label_c_len);
 	label[label_len - 1] = '\0';
-	set_label(c, label);
+	set_label(c, label, strlen(label));
 	p->child[pi] = c;
 	if (n->flags & F_SEPL)
 		free(label_n);
