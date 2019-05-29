@@ -78,13 +78,13 @@ static void test_insert_seq(void)
 
 	n = 0;
 	do {
-		if (ctrie_contains(&a, key)) {
-			assert(!ctrie_contains(&b, key));
+		if (ctrie_contains(&a, key, strlen(key))) {
+			assert(!ctrie_contains(&b, key, strlen(key)));
 			d = ctrie_find(&a, key);
 			assert(*d == n);
 		}
-		if (ctrie_contains(&b, key)) {
-			assert(!ctrie_contains(&a, key));
+		if (ctrie_contains(&b, key, strlen(key))) {
+			assert(!ctrie_contains(&a, key, strlen(key)));
 			d = ctrie_find(&b, key);
 			assert(*d == n);
 		}
@@ -138,7 +138,7 @@ static void test_insert_english(void)
 	fseek(words, SEEK_SET, 0);
 	while ((len = getline(&word, &word_size, words)) > 0) {
 		word[len - 1] = '\0'; /* strip trailing newline */
-		assert(ctrie_contains(&t, word));
+		assert(ctrie_contains(&t, word, strlen(word)));
 		d = ctrie_find(&t, word);
 		assert(strcmp(d, word) == 0);
 	}
@@ -180,18 +180,18 @@ static void test_remove_seq(void)
 	rst(key);
 	do {
 		ctrie_remove(&a, key);
-		assert(!ctrie_contains(&a, key));
+		assert(!ctrie_contains(&a, key, strlen(key)));
 		ctrie_insert(&b, key, false);
 		/* check that no deleted key is found */
 		ctrie_iter_init(&b, &it);
 		while (ctrie_iter_next(&it, &key2, &key2_size, &key2_len))
-			assert(!ctrie_contains(&a, key2));
+			assert(!ctrie_contains(&a, key2, key2_len));
 		ctrie_iter_free(&it);
 		/* check that all non-deleted keys are still found */
 		ctrie_iter_init(&c, &it);
 		while (ctrie_iter_next(&it, &key2, &key2_size, &key2_len))
-			if (!ctrie_contains(&b, key2))
-				assert(ctrie_contains(&a, key2));
+			if (!ctrie_contains(&b, key2, key2_len))
+				assert(ctrie_contains(&a, key2, key2_len));
 		ctrie_iter_free(&it);
 	} while (inc(key));
 }

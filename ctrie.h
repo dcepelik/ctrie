@@ -37,7 +37,7 @@ void *ctrie_find(struct ctrie *t, char *key);
 /*
  * Does the trie `t` contain the string `key`?
  */
-bool ctrie_contains(struct ctrie *t, char *key);
+bool ctrie_contains(struct ctrie *t, char *key, size_t key_len);
 
 /*
  * Insert the key `key` into the trie `t` and return a pointer to the memory

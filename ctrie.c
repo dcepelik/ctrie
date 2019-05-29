@@ -98,11 +98,10 @@ static void set_label(struct ctnode *n, char *label, size_t label_len)
 {
 	char *old_label = get_label(n);
 	bool need_free = (n->flags & F_SEPL);
-	TODO_ASSERT(label_len == strlen(label));
+	//TODO_ASSERT(label_len == strlen(label));
 	if (label_len < sizeof(n->label)) {
 		n->flags &= ~F_SEPL;
 		memmove(n->label, label, label_len);
-		n->label[label_len] = '\0';
 	} else {
 		n->flags |= F_SEPL;
 		*(char **)&n->label = strdup(label);
@@ -166,7 +165,6 @@ static struct ctnode *new_node(struct ctrie *t, size_t min_size)
 	n->nchild = 0;
 	n->size = size;
 	n->flags = 0;
-	n->label[0] = '\0';
 	n->label_len = 0;
 	return n;
 }
@@ -308,9 +306,9 @@ void *ctrie_find(struct ctrie *t, char *key)
 	return n ? data(t, n) : NULL;
 }
 
-bool ctrie_contains(struct ctrie *t, char *key)
+bool ctrie_contains(struct ctrie *t, char *key, size_t key_len)
 {
-	return find(t, key, strlen(key)) != NULL;
+	return find(t, key, key_len) != NULL;
 }
 
 static void ctrie_print_node(struct ctrie *t, struct ctnode *n, size_t level)
@@ -367,7 +365,6 @@ void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
 	if (li < l_len) { /* create new node between `parent` and `n`, split label */
 		struct ctnode *s = new_node(t, 1);
 		s = insert_child(t, s, l[li], n); /* won't trigger resize */
-		l[li] = '\0';
 		set_label(s, l, li);
 		li++;
 		parent->child[idx] = s;
@@ -410,7 +407,6 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 	memcpy(label, label_n, label_n_len);
 	label[label_n_len] = char_array(t, n)[0];
 	memcpy(label + label_n_len + 1, label_c, label_c_len);
-	label[label_len - 1] = '\0';
 	set_label(c, label, label_len - 1);
 	p->child[pi] = c;
 	if (n->flags & F_SEPL)
@@ -512,7 +508,6 @@ struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *key_si
 		AGROW(*key, *key_len + 1, *key_size);
 		(*key)[se->key_len] = c;
 		memcpy(*key + se->key_len + 1, label, label_len);
-		(*key)[*key_len] = '\0';
 		if (n->nchild)
 			push(it, n)->key_len = *key_len;
 		if (n->flags & F_WORD)
