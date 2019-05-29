@@ -32,7 +32,7 @@ void ctrie_init(struct ctrie *t, size_t data_size);
  * Find node with key `key` and return it. If the key is not present in `t`,
  * return `NULL`.
  */
-void *ctrie_find(struct ctrie *t, char *key);
+void *ctrie_find(struct ctrie *t, char *key, size_t key_len);
 
 /*
  * Does the trie `t` contain the string `key`?
@@ -52,7 +52,7 @@ void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard);
 /*
  * Remove the key `key` from the trie `t`.
  */
-int ctrie_remove(struct ctrie *t, char *key);
+int ctrie_remove(struct ctrie *t, char *key, size_t key_len);
 
 /*
  * Print a textual representation of the trie. Useful for debugging only.

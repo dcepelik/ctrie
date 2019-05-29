@@ -7,6 +7,7 @@
 #include <time.h>
 
 #define SEQ_KEY_LEN        6
+#define LONG_KEY_LEN       10
 #define LONG_KEY_TEST_SIZE 1024
 #define ENGLISH_WORD_MAX   45
 #define WORDS_FILE         "words.txt"
@@ -65,11 +66,8 @@ static void test_insert_seq(void)
 	ctrie_init(&a, sizeof(*d));
 	ctrie_init(&b, sizeof(*d));
 
-	for (size_t i = 0; i < SEQ_KEY_LEN; i++)
-		key[i] = 'a';
-	key[SEQ_KEY_LEN] = '\0';
-
 	n = 0;
+	rst(key);
 	do {
 		d = ctrie_insert((rand() % 2) ? &a : &b, key, SEQ_KEY_LEN, false);
 		*d = n++;
@@ -77,14 +75,14 @@ static void test_insert_seq(void)
 
 	n = 0;
 	do {
-		if (ctrie_contains(&a, key, strlen(key))) {
-			assert(!ctrie_contains(&b, key, strlen(key)));
-			d = ctrie_find(&a, key);
+		if (ctrie_contains(&a, key, SEQ_KEY_LEN)) {
+			assert(!ctrie_contains(&b, key, SEQ_KEY_LEN));
+			d = ctrie_find(&a, key, SEQ_KEY_LEN);
 			assert(*d == n);
 		}
-		if (ctrie_contains(&b, key, strlen(key))) {
-			assert(!ctrie_contains(&a, key, strlen(key)));
-			d = ctrie_find(&b, key);
+		if (ctrie_contains(&b, key, SEQ_KEY_LEN)) {
+			assert(!ctrie_contains(&a, key, SEQ_KEY_LEN));
+			d = ctrie_find(&b, key, SEQ_KEY_LEN);
 			assert(*d == n);
 		}
 		n++;
@@ -96,18 +94,17 @@ static void test_insert_seq(void)
 static void test_insert_long_keys(void)
 {
 	struct ctrie t;
-	char key[SEQ_KEY_LEN];
+	char key[LONG_KEY_LEN];
 	char *d;
 
-	ctrie_init(&t, SEQ_KEY_LEN);
+	ctrie_init(&t, LONG_KEY_LEN);
 	for (size_t n = 0; n < LONG_KEY_TEST_SIZE; n++) {
-		size_t len = rand() % SEQ_KEY_LEN;
+		size_t len = rand() % LONG_KEY_LEN;
 		for (size_t i = 0; i < len; i++)
-			key[i] = 'a' + (rand() % ('z' - 'a'));
-		key[len] = '\0';
-		d = ctrie_insert(&t, key, strlen(key), false);
-		assert(d == ctrie_find(&t, key));
-		assert(d == ctrie_insert(&t, key, strlen(key), false));
+			key[i] = rand() % 256;
+		d = ctrie_insert(&t, key, len, false);
+		assert(d == ctrie_find(&t, key, len));
+		assert(d == ctrie_insert(&t, key, len, false));
 	}
 	ctrie_free(&t);
 }
@@ -138,7 +135,7 @@ static void test_insert_english(void)
 	while ((len = getline(&word, &word_size, words)) > 0) {
 		word[len - 1] = '\0'; /* strip trailing newline */
 		assert(ctrie_contains(&t, word, strlen(word)));
-		d = ctrie_find(&t, word);
+		d = ctrie_find(&t, word, strlen(word));
 		assert(strcmp(d, word) == 0);
 	}
 	free(word);
@@ -159,7 +156,7 @@ static void test_insert_english(void)
 static void test_remove_seq(void)
 {
 	struct ctrie a, b, c;
-	char key[SEQ_KEY_LEN + 1];
+	char key[SEQ_KEY_LEN];
 
 	ctrie_init(&a, 0);
 	ctrie_init(&c, 0);
@@ -178,8 +175,8 @@ static void test_remove_seq(void)
 	size_t key2_len;
 	rst(key);
 	do {
-		ctrie_remove(&a, key);
-		assert(!ctrie_contains(&a, key, strlen(key)));
+		ctrie_remove(&a, key, SEQ_KEY_LEN);
+		assert(!ctrie_contains(&a, key, SEQ_KEY_LEN));
 		ctrie_insert(&b, key, SEQ_KEY_LEN, false);
 		/* check that no deleted key is found */
 		ctrie_iter_init(&b, &it);

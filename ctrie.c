@@ -298,9 +298,9 @@ static struct ctnode *find(struct ctrie *t, char *key, size_t key_len)
 	return find3(t, key, key_len, &pp, &ppi, &p, &pi);
 }
 
-void *ctrie_find(struct ctrie *t, char *key)
+void *ctrie_find(struct ctrie *t, char *key, size_t key_len)
 {
-	struct ctnode *n = find(t, key, strlen(key));
+	struct ctnode *n = find(t, key, key_len);
 	return n ? data(t, n) : NULL;
 }
 
@@ -410,11 +410,11 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 	free(n);
 }
 
-int ctrie_remove(struct ctrie *t, char *key)
+int ctrie_remove(struct ctrie *t, char *key, size_t key_len)
 {
 	struct ctnode *pp, *p;
 	size_t ppi, pi;
-	struct ctnode *n = find3(t, key, strlen(key), &pp, &ppi, &p, &pi);
+	struct ctnode *n = find3(t, key, key_len, &pp, &ppi, &p, &pi);
 	assert(n != NULL);
 	if (!n)
 		return -1; /* TODO indicate error */
