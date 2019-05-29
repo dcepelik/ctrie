@@ -6,22 +6,21 @@
 #include <string.h>
 #include <time.h>
 
-#define KEY_MAX_LEN        6
+#define SEQ_KEY_LEN        6
 #define LONG_KEY_TEST_SIZE 1024
 #define ENGLISH_WORD_MAX   45
 #define WORDS_FILE         "words.txt"
 
-static void rst(char k[KEY_MAX_LEN])
+static void rst(char k[SEQ_KEY_LEN])
 {
-	for (size_t i = 0; i < KEY_MAX_LEN; i++)
+	for (size_t i = 0; i < SEQ_KEY_LEN; i++)
 		k[i] = 'a';
-	k[KEY_MAX_LEN] = '\0';
 }
 
-int inc(char k[KEY_MAX_LEN])
+int inc(char k[SEQ_KEY_LEN])
 {
 	int i;
-	for (i = KEY_MAX_LEN - 1; i >= 0; i--) {
+	for (i = SEQ_KEY_LEN - 1; i >= 0; i--) {
 		if (++k[i] <= 'c')
 			break;
 		k[i] = 'a';
@@ -32,11 +31,11 @@ int inc(char k[KEY_MAX_LEN])
 static void test_iter_seq(void)
 {
 	struct ctrie t;
-	char key[KEY_MAX_LEN + 1];
+	char key[SEQ_KEY_LEN + 1];
 	ctrie_init(&t, 0);
 	rst(key);
 	do {
-		ctrie_insert(&t, key, false);
+		ctrie_insert(&t, key, SEQ_KEY_LEN, false);
 	} while (inc(key));
 
 	struct ctrie_iter it;
@@ -49,8 +48,8 @@ static void test_iter_seq(void)
 	size_t key2_len;
 	int more;
 	while ((n = ctrie_iter_next(&it, &key2, &key2_size, &key2_len))) {
-		assert(key2_len == KEY_MAX_LEN);
-		assert(!strncmp(key, key2, KEY_MAX_LEN));
+		assert(key2_len == SEQ_KEY_LEN);
+		assert(!strncmp(key, key2, SEQ_KEY_LEN));
 		more = inc(key);
 	}
 	assert(!more);
@@ -59,20 +58,20 @@ static void test_iter_seq(void)
 static void test_insert_seq(void)
 {
 	struct ctrie a, b;
-	char key[KEY_MAX_LEN + 1];
+	char key[SEQ_KEY_LEN + 1];
 	int *d;
 	int n = 0;
 
 	ctrie_init(&a, sizeof(*d));
 	ctrie_init(&b, sizeof(*d));
 
-	for (size_t i = 0; i < KEY_MAX_LEN; i++)
+	for (size_t i = 0; i < SEQ_KEY_LEN; i++)
 		key[i] = 'a';
-	key[KEY_MAX_LEN] = '\0';
+	key[SEQ_KEY_LEN] = '\0';
 
 	n = 0;
 	do {
-		d = ctrie_insert((rand() % 2) ? &a : &b, key, false);
+		d = ctrie_insert((rand() % 2) ? &a : &b, key, SEQ_KEY_LEN, false);
 		*d = n++;
 	} while (inc(key));
 
@@ -97,18 +96,18 @@ static void test_insert_seq(void)
 static void test_insert_long_keys(void)
 {
 	struct ctrie t;
-	char key[KEY_MAX_LEN];
+	char key[SEQ_KEY_LEN];
 	char *d;
 
-	ctrie_init(&t, KEY_MAX_LEN);
+	ctrie_init(&t, SEQ_KEY_LEN);
 	for (size_t n = 0; n < LONG_KEY_TEST_SIZE; n++) {
-		size_t len = rand() % KEY_MAX_LEN;
+		size_t len = rand() % SEQ_KEY_LEN;
 		for (size_t i = 0; i < len; i++)
 			key[i] = 'a' + (rand() % ('z' - 'a'));
 		key[len] = '\0';
-		d = ctrie_insert(&t, key, false);
+		d = ctrie_insert(&t, key, strlen(key), false);
 		assert(d == ctrie_find(&t, key));
-		assert(d == ctrie_insert(&t, key, false));
+		assert(d == ctrie_insert(&t, key, strlen(key), false));
 	}
 	ctrie_free(&t);
 }
@@ -132,7 +131,7 @@ static void test_insert_english(void)
 
 	while ((len = getline(&word, &word_size, words)) > 0) {
 		word[len - 1] = '\0'; /* trim the new-line */
-		d = ctrie_insert(&t, word, false);
+		d = ctrie_insert(&t, word, strlen(word), false);
 		strncpy(d, word, len + 1);
 	}
 	fseek(words, SEEK_SET, 0);
@@ -160,7 +159,7 @@ static void test_insert_english(void)
 static void test_remove_seq(void)
 {
 	struct ctrie a, b, c;
-	char key[KEY_MAX_LEN + 1];
+	char key[SEQ_KEY_LEN + 1];
 
 	ctrie_init(&a, 0);
 	ctrie_init(&c, 0);
@@ -168,8 +167,8 @@ static void test_remove_seq(void)
 
 	rst(key);
 	do {
-		ctrie_insert(&a, key, false);
-		ctrie_insert(&c, key, false);
+		ctrie_insert(&a, key, SEQ_KEY_LEN, false);
+		ctrie_insert(&c, key, SEQ_KEY_LEN, false);
 	} while (inc(key));
 
 	struct ctrie_iter it;
@@ -181,7 +180,7 @@ static void test_remove_seq(void)
 	do {
 		ctrie_remove(&a, key);
 		assert(!ctrie_contains(&a, key, strlen(key)));
-		ctrie_insert(&b, key, false);
+		ctrie_insert(&b, key, SEQ_KEY_LEN, false);
 		/* check that no deleted key is found */
 		ctrie_iter_init(&b, &it);
 		while (ctrie_iter_next(&it, &key2, &key2_size, &key2_len))

@@ -337,7 +337,7 @@ void ctrie_dump(struct ctrie *t)
 	ctrie_print_node(t, t->fake_root->child[0], 0);
 }
 
-void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
+void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 {
 	/* TODO assert key not empty */
 	struct ctnode *parent = t->fake_root;
@@ -345,7 +345,6 @@ void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
 	size_t idx = 0;
 	char *l;
 	size_t j, i = 0;
-	size_t key_len = strlen(key);
 	while (1) { /* find longest prefix of key in the trie */
 		l = get_label(n);
 		for (j = 0; i < key_len && j < n->label_len && key[i] == l[j]; j++, i++);

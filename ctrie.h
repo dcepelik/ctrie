@@ -47,7 +47,7 @@ bool ctrie_contains(struct ctrie *t, char *key, size_t key_len);
  * The `wildcard` argument denotes whether the key should be treated as a prefix
  * wildcard.
  */
-void *ctrie_insert(struct ctrie *t, char *key, bool wildcard);
+void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard);
 
 /*
  * Remove the key `key` from the trie `t`.
