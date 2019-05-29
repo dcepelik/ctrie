@@ -8,7 +8,7 @@
 
 #define SEQ_KEY_LEN        6
 #define LONG_KEY_LEN       10
-#define LONG_KEY_TEST_SIZE 1024
+#define LONG_KEY_TEST_SIZE 2048
 #define ENGLISH_WORD_MAX   45
 #define WORDS_FILE         "words.txt"
 
@@ -101,7 +101,7 @@ static void test_insert_long_keys(void)
 	for (size_t n = 0; n < LONG_KEY_TEST_SIZE; n++) {
 		size_t len = rand() % LONG_KEY_LEN;
 		for (size_t i = 0; i < len; i++)
-			key[i] = rand() % 256;
+			key[i] = rand() % 255; /* intentionally 255 */
 		d = ctrie_insert(&t, key, len, false);
 		assert(d == ctrie_find(&t, key, len));
 		assert(d == ctrie_insert(&t, key, len, false));

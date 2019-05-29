@@ -192,6 +192,7 @@ static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, st
 		n = resize(t, n, MAX(1, MIN(2 * n->size, 255)));
 	size_t idx = find_child_idx(t, n, k);
 	assert(idx < n->size);
+	assert(n->nchild < n->size);
 	char *a = char_array(t, n);
 	ARRAY_SHIFT(a, idx + 1, idx, n->nchild);
 	ARRAY_SHIFT(n->child, idx + 1, idx, n->nchild);
