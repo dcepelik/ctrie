@@ -98,7 +98,7 @@ static void set_label(struct ctnode *n, char *label, size_t label_len)
 {
 	char *old_label = get_label(n);
 	bool need_free = (n->flags & F_SEPL);
-	//TODO_ASSERT(label_len == strlen(label));
+	TODO_ASSERT(label_len <= LABEL_LEN_MAX);
 	if (label_len < sizeof(n->label)) {
 		n->flags &= ~F_SEPL;
 		memmove(n->label, label, label_len);
@@ -252,15 +252,13 @@ static inline struct ctnode *find3(struct ctrie *t, char *key, size_t key_len,
 	struct ctnode *w = NULL, *wp = *p, *wpp = *pp;
 	size_t wpi, wppi;
 	struct ctnode *n = t->fake_root->child[0];
-	size_t ki = 0, li;
-	size_t l_len;
+	size_t i = 0, j;
 	while (n) {
 		char *l = get_label(n);
-		l_len = n->label_len;
-		for (li = 0; ki < key_len && li < l_len && key[ki] == l[li]; li++, ki++);
-		if (li < l_len) /* label mismatch */
+		for (j = 0; i < key_len && j < n->label_len && key[i] == l[j]; j++, i++);
+		if (j < n->label_len) /* label mismatch */
 			break;
-		if (ki >= key_len) { /* key matched current node */
+		if (i >= key_len) { /* key matched current node */
 			if (n->flags & F_WORD)
 				return n;
 			break;
@@ -276,8 +274,8 @@ static inline struct ctnode *find3(struct ctrie *t, char *key, size_t key_len,
 		*pp = *p;
 		*ppi = *pi;
 		*p = n;
-		char k = key[ki];
-		ki++;
+		char k = key[i];
+		i++;
 		*pi = find_child_idx(t, n, k);
 		if (*pi >= n->nchild || char_array(t, n)[*pi] != k)
 			break;
@@ -320,7 +318,7 @@ static void ctrie_print_node(struct ctrie *t, struct ctnode *n, size_t level)
 			putchar(' ');
 		printf("[%c]->'%s' size=%i alloc=%zuB <",
 			a[i],
-			get_label(c),
+			get_label(c), // FIXME get_label(c) is not NUL terminated!
 			c->size,
 			alloc_size(t, c->size));
 		if (c->flags & F_WORD)
@@ -346,36 +344,35 @@ void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
 	struct ctnode *n = t->fake_root->child[0];
 	size_t idx = 0;
 	char *l;
-	size_t li, ki = 0;
-	size_t key_len = strlen(key), l_len;
+	size_t j, i = 0;
+	size_t key_len = strlen(key);
 	while (1) { /* find longest prefix of key in the trie */
 		l = get_label(n);
-		l_len = n->label_len;
-		for (li = 0; ki < key_len && li < l_len && key[ki] == l[li]; li++, ki++);
-		if (li < l_len || ki >= key_len) /* false for root label and non-empty key */
+		for (j = 0; i < key_len && j < n->label_len && key[i] == l[j]; j++, i++);
+		if (j < n->label_len || i >= key_len) /* false for root label and non-empty key */
 			break;
-		size_t next_idx = find_child_idx(t, n, key[ki]);
-		if (next_idx >= n->nchild || char_array(t, n)[next_idx] != key[ki])
+		size_t next_idx = find_child_idx(t, n, key[i]);
+		if (next_idx >= n->nchild || char_array(t, n)[next_idx] != key[i])
 			break;
-		ki++;
+		i++;
 		parent = n;
 		n = n->child[next_idx];
 		idx = next_idx;
 	}
-	if (li < l_len) { /* create new node between `parent` and `n`, split label */
+	if (j < n->label_len) { /* create new node between `parent` and `n`, split label */
 		struct ctnode *s = new_node(t, 1);
-		s = insert_child(t, s, l[li], n); /* won't trigger resize */
-		set_label(s, l, li);
-		li++;
+		s = insert_child(t, s, l[j], n); /* won't trigger resize */
+		set_label(s, l, j);
+		j++;
 		parent->child[idx] = s;
-		set_label(n, l + li, l_len - li);
+		set_label(n, l + j, n->label_len - j);
 		n = s;
 	}
-	if (ki < key_len) { /* `n` is a prefix for `key`, prolong the path */
+	if (i < key_len) { /* `n` is a prefix for `key`, prolong the path */
 		struct ctnode *new = new_node(t, 0);
-		n = insert_child(t, n, key[ki], new);
-		ki++;
-		set_label(new, key + ki, key_len - ki); /* without the first char */
+		n = insert_child(t, n, key[i], new);
+		i++;
+		set_label(new, key + i, key_len - i); /* without the first char */
 		parent->child[idx] = n;
 		n = new;
 	}
