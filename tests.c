@@ -169,7 +169,6 @@ static void test_remove_seq(void)
 	} while (inc(key));
 
 	struct ctrie_iter it;
-	//struct ctnode *n;
 	char *key2 = NULL;
 	size_t key2_size = 0;
 	size_t key2_len;

@@ -7,8 +7,8 @@
 #define TODO_ASSERT(x) assert(x)
 
 /*
- * - Don't assume C strings, use explicit label length <= 255 B everywhere.
- * - Add tests which do not use C strings (seq tests, random tests).
+ * - ~~Don't assume C strings, use explicit label length <= 255 B everywhere.~~
+ * - ~~Add tests which do not use C strings (seq tests, random tests).~~
  * - Don't allocate label externally, resize the node to fit the label.
  * - Don't allocate data everywhere (only for F_WORD nodes).
  * - Change the topology of the structure towards the new one:
@@ -19,6 +19,7 @@
  *               byte_t nchild;
  *               byte_t label[];
  *       }
+ *
  * - Support node embedding (F_EMBED) and 8 B minimum node size.
  * - Extend API to support C strings nicely. (Or maybe not; not sure.)
  * - Lift 255 B label restriction.
@@ -129,6 +130,11 @@ static char *char_array(struct ctrie *t, struct ctnode *n)
 	return (char *)((byte_t *)n + alloc_size(t, n->size) - n->size);
 }
 
+static struct ctnode **child_array(struct ctrie *t, struct ctnode *n)
+{
+	return n->child;
+}
+
 /*
  * Return a pointer to the data memory of the node `n`.
  */
@@ -195,9 +201,10 @@ static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, st
 	assert(n->nchild < n->size);
 	char *a = char_array(t, n);
 	ARRAY_SHIFT(a, idx + 1, idx, n->nchild);
-	ARRAY_SHIFT(n->child, idx + 1, idx, n->nchild);
+	struct ctnode **c = child_array(t, n);
+	ARRAY_SHIFT(c, idx + 1, idx, n->nchild);
 	a[idx] = k;
-	n->child[idx] = child;
+	c[idx] = child;
 	n->nchild++;
 	return n;
 }
@@ -206,13 +213,13 @@ void ctrie_init(struct ctrie *t, size_t data_size)
 {
 	t->data_size = data_size;
 	t->fake_root = insert_child(t, new_node(t, 1), '\0', new_node(t, 0));
-	t->fake_root->child[0]->flags |= F_WORD;
+	child_array(t, t->fake_root)[0]->flags |= F_WORD;
 }
 
-static void delete_node(struct ctnode *n)
+static void delete_node(struct ctrie *t, struct ctnode *n)
 {
 	for (size_t i = 0; i < n->nchild; i++)
-		delete_node(n->child[i]);
+		delete_node(t, child_array(t, n)[i]);
 	if (n->flags & F_SEPL)
 		free(get_label(n));
 	free(n);
@@ -221,7 +228,7 @@ static void delete_node(struct ctnode *n)
 void ctrie_free(struct ctrie *t)
 {
 	return;
-	delete_node(t->fake_root);
+	delete_node(t, t->fake_root);
 }
 
 /*
@@ -252,7 +259,7 @@ static inline struct ctnode *find3(struct ctrie *t, char *key, size_t key_len,
 	*p = t->fake_root;
 	struct ctnode *w = NULL, *wp = *p, *wpp = *pp;
 	size_t wpi, wppi;
-	struct ctnode *n = t->fake_root->child[0];
+	struct ctnode *n = child_array(t, t->fake_root)[0];
 	size_t i = 0, j;
 	while (n) {
 		char *l = get_label(n);
@@ -280,9 +287,9 @@ static inline struct ctnode *find3(struct ctrie *t, char *key, size_t key_len,
 		*pi = find_child_idx(t, n, k);
 		if (*pi >= n->nchild || char_array(t, n)[*pi] != k)
 			break;
-		n = (*p)->child[*pi];
-		assert((*pp)->child[*ppi] == *p);
-		assert((*p)->child[*pi] == n);
+		n = child_array(t, (*p))[*pi];
+		assert(child_array(t, (*pp))[*ppi] == *p);
+		assert(child_array(t, (*p))[*pi] == n);
 	}
 	/* return last wild-card node encountered during the search (if any) */
 	*pp = wpp;
@@ -314,7 +321,7 @@ static void ctrie_print_node(struct ctrie *t, struct ctnode *n, size_t level)
 {
 	char *a = char_array(t, n);
 	for (size_t i = 0; i < n->nchild; i++) {
-		struct ctnode *c = n->child[i];
+		struct ctnode *c = child_array(t, n)[i];
 		for (size_t j = 0; j < 4 * level; j++)
 			putchar(' ');
 		printf("[%c]->'%s' size=%i alloc=%zuB <",
@@ -335,14 +342,14 @@ static void ctrie_print_node(struct ctrie *t, struct ctnode *n, size_t level)
 
 void ctrie_dump(struct ctrie *t)
 {
-	ctrie_print_node(t, t->fake_root->child[0], 0);
+	ctrie_print_node(t, child_array(t, t->fake_root)[0], 0);
 }
 
 void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 {
 	/* TODO assert key not empty */
 	struct ctnode *parent = t->fake_root;
-	struct ctnode *n = t->fake_root->child[0];
+	struct ctnode *n = child_array(t, t->fake_root)[0];
 	size_t idx = 0;
 	char *l;
 	size_t j, i = 0;
@@ -356,7 +363,7 @@ void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 			break;
 		i++;
 		parent = n;
-		n = n->child[next_idx];
+		n = child_array(t, n)[next_idx];
 		idx = next_idx;
 	}
 	if (j < n->label_len) { /* create new node between `parent` and `n`, split label */
@@ -364,7 +371,7 @@ void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 		s = insert_child(t, s, l[j], n); /* won't trigger resize */
 		set_label(s, l, j);
 		j++;
-		parent->child[idx] = s;
+		child_array(t, parent)[idx] = s;
 		set_label(n, l + j, n->label_len - j);
 		n = s;
 	}
@@ -373,7 +380,7 @@ void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 		n = insert_child(t, n, key[i], new);
 		i++;
 		set_label(new, key + i, key_len - i); /* without the first char */
-		parent->child[idx] = n;
+		child_array(t, parent)[idx] = n;
 		n = new;
 	}
 	n->flags |= F_WORD;
@@ -390,10 +397,10 @@ void *ctrie_insert(struct ctrie *t, char *key, size_t key_len, bool wildcard)
 void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 {
 	assert(p->nchild >= 1);
-	assert(p->child[pi] == n);
+	assert(child_array(t, p)[pi] == n);
 	assert(n->nchild == 1);
 	assert(!(n->flags & F_WORD));
-	struct ctnode *c = n->child[0];
+	struct ctnode *c = child_array(t, n)[0];
 	char *label_n = get_label(n);
 	char *label_c = get_label(c);
 	size_t label_n_len = n->label_len;
@@ -405,7 +412,7 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 	label[label_n_len] = char_array(t, n)[0];
 	memcpy(label + label_n_len + 1, label_c, label_c_len);
 	set_label(c, label, label_len);
-	p->child[pi] = c;
+	child_array(t, p)[pi] = c;
 	if (n->flags & F_SEPL)
 		free(label_n);
 	free(n);
@@ -429,8 +436,8 @@ int ctrie_remove(struct ctrie *t, char *key, size_t key_len)
 	}
 	/* `n` is a leaf node */
 	assert(p->nchild > 1 || p->flags & F_WORD);
-	assert(p->child[pi] == n);
-	ARRAY_SHIFT(p->child, pi, pi + 1, p->nchild);
+	assert(child_array(t, p)[pi] == n);
+	ARRAY_SHIFT(child_array(t, p), pi, pi + 1, p->nchild);
 	ARRAY_SHIFT(char_array(t, p), pi, pi + 1, p->nchild);
 	if (n->flags & F_SEPL)
 		free(get_label(n));
@@ -482,7 +489,7 @@ void ctrie_iter_init(struct ctrie *t, struct ctrie_iter *it)
 	it->t = t;
 	it->stack = NULL;
 	it->stack_size = it->nstack = 0;
-	push(it, t->fake_root->child[0])->key_len = 0;
+	push(it, child_array(t, t->fake_root)[0])->key_len = 0;
 }
 
 struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *key_size, size_t *key_len)
@@ -498,7 +505,7 @@ struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *key_si
 			continue;
 		}
 		char c = char_array(it->t, se->n)[se->idx];
-		n = se->n->child[se->idx];
+		n = child_array(it->t, se->n)[se->idx];
 		char *label = get_label(n);
 		label_len = n->label_len;
 		*key_len = se->key_len + 1 + label_len;
