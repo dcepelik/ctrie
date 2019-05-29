@@ -46,9 +46,11 @@ static void test_iter_seq(void)
 	struct ctnode *n;
 	char *key2 = NULL;
 	size_t key2_size = 0;
+	size_t key2_len;
 	int more;
-	while ((n = ctrie_iter_next(&it, &key2, &key2_size))) {
-		assert(!strcmp(key, key2));
+	while ((n = ctrie_iter_next(&it, &key2, &key2_size, &key2_len))) {
+		assert(key2_len == KEY_MAX_LEN);
+		assert(!strncmp(key, key2, KEY_MAX_LEN));
 		more = inc(key);
 	}
 	assert(!more);
@@ -174,6 +176,7 @@ static void test_remove_seq(void)
 	//struct ctnode *n;
 	char *key2 = NULL;
 	size_t key2_size = 0;
+	size_t key2_len;
 	rst(key);
 	do {
 		ctrie_remove(&a, key);
@@ -181,12 +184,12 @@ static void test_remove_seq(void)
 		ctrie_insert(&b, key, false);
 		/* check that no deleted key is found */
 		ctrie_iter_init(&b, &it);
-		while (ctrie_iter_next(&it, &key2, &key2_size))
+		while (ctrie_iter_next(&it, &key2, &key2_size, &key2_len))
 			assert(!ctrie_contains(&a, key2));
 		ctrie_iter_free(&it);
 		/* check that all non-deleted keys are still found */
 		ctrie_iter_init(&c, &it);
-		while (ctrie_iter_next(&it, &key2, &key2_size))
+		while (ctrie_iter_next(&it, &key2, &key2_size, &key2_len))
 			if (!ctrie_contains(&b, key2))
 				assert(ctrie_contains(&a, key2));
 		ctrie_iter_free(&it);

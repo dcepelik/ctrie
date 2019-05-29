@@ -98,7 +98,7 @@ void ctrie_iter_init(struct ctrie *t, struct ctrie_iter *it);
  *
  * The memory allocation scheme was modeled after `getline(3)`.
  */
-struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *n);
+struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *n, size_t *key_len);
 
 /*
  * Dispose the iterator `it`.
