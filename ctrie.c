@@ -79,7 +79,6 @@ struct ctnode
 	byte_t size;            /* capacity of the `child` array */
 	byte_t nchild;          /* number of children */
 	char *label;            /* pointer to a label (TODO refactoring helper) */
-	struct ctnode *child[]; /* child pointers start here */
 };
 
 /*
@@ -133,25 +132,19 @@ static size_t alloc_size(struct ctrie *t, size_t s, size_t l)
 //	return ceil2(n->nchild);
 //}
 
-/*
- * Return a pointer to the character array of the node `n`.
- */
-static char *char_array(struct ctrie *t, struct ctnode *n)
+static void *data(struct ctrie *t, struct ctnode *n)
 {
-	return (char *)((byte_t *)n + alloc_size(t, n->size, n->label_len) - n->size);
+	return (void *)((byte_t *)n + alloc_size(t, n->size, n->label_len) - t->data_size);
 }
 
 static struct ctnode **child_array(struct ctrie *t, struct ctnode *n)
 {
-	return n->child;
+	return (struct ctnode **)((byte_t *)data(t, n) - n->size * sizeof(struct ctnode *));
 }
 
-/*
- * Return a pointer to the data memory of the node `n`.
- */
-static void *data(struct ctrie *t, struct ctnode *n)
+static char *char_array(struct ctrie *t, struct ctnode *n)
 {
-	return (void *)(char_array(t, n) - t->data_size);
+	return (char *)((byte_t *)child_array(t, n) - n->size);
 }
 
 static struct ctnode *resize(struct ctrie *t, struct ctnode *n, size_t s, size_t l)
@@ -160,10 +153,14 @@ static struct ctnode *resize(struct ctrie *t, struct ctnode *n, size_t s, size_t
 	size_t old_size = n->size;
 	n = realloc(n, alloc_size(t, s, l));
 	assert(n != NULL);
-	void *old = data(t, n);
+	void *old_chars = char_array(t, n);
+	void *old_children = child_array(t, n);
+	void *old_data = data(t, n);
 	n->size = s;
 	/* copy both data and the char array to the new node */
-	memmove(data(t, n), old, t->data_size + old_size);
+	memmove(data(t, n), old_data, t->data_size);
+	memmove(child_array(t, n), old_children, old_size * sizeof(struct ctnode *));
+	memmove(char_array(t, n), old_chars, old_size);
 	return n;
 }
 
