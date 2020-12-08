@@ -69,7 +69,7 @@ static char *get_label(struct ctnode *n)
  * will be copied into the `label` field of the node. If it's longer, create
  * a copy of the string given using `strdup`.
  */
-static void set_label(struct ctnode *n, char *label)
+static void set_label(struct ctnode *n, const char *label)
 {
 	char *old_label = get_label(n);
 	bool need_free = (n->flags & F_SEPL);
@@ -221,7 +221,7 @@ void ctrie_free(struct ctrie *t)
  * grand-parent of modified node, this seems reasonable.
  */
 static inline struct ctnode *find3(struct ctrie *t,
-                                   char *key,
+                                   const char *key,
                                    struct ctnode **pp,
                                    size_t *ppi,
                                    struct ctnode **p,
@@ -270,20 +270,20 @@ static inline struct ctnode *find3(struct ctrie *t,
 	return w;
 }
 
-static struct ctnode *find(struct ctrie *t, char *key)
+static struct ctnode *find(struct ctrie *t, const char *key)
 {
 	struct ctnode *p, *pp;
 	size_t pi, ppi;
 	return find3(t, key, &pp, &ppi, &p, &pi);
 }
 
-void *ctrie_find(struct ctrie *t, char *key)
+void *ctrie_find(struct ctrie *t, const char *key)
 {
 	struct ctnode *n = find(t, key);
 	return n ? data(t, n) : NULL;
 }
 
-bool ctrie_contains(struct ctrie *t, char *key)
+bool ctrie_contains(struct ctrie *t, const char *key)
 {
 	return find(t, key) != NULL;
 }
@@ -316,7 +316,7 @@ void ctrie_dump(struct ctrie *t)
 	ctrie_print_node(t, t->fake_root->child[0], 0);
 }
 
-void *ctrie_insert(struct ctrie *t, char *key, bool wildcard)
+void *ctrie_insert(struct ctrie *t, const char *key, bool wildcard)
 {
 	/* TODO assert key not empty */
 	struct ctnode *n = t->fake_root->child[0], *parent = t->fake_root;
@@ -386,7 +386,7 @@ void cut(struct ctrie *t, struct ctnode *n, struct ctnode *p, size_t pi)
 	free(n);
 }
 
-int ctrie_remove(struct ctrie *t, char *key)
+int ctrie_remove(struct ctrie *t, const char *key)
 {
 	struct ctnode *pp, *p;
 	size_t ppi, pi;
