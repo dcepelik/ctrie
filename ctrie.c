@@ -391,8 +391,8 @@ int ctrie_remove(struct ctrie *t, char *key)
 	struct ctnode *pp, *p;
 	size_t ppi, pi;
 	struct ctnode *n = find3(t, key, &pp, &ppi, &p, &pi);
-	// TODO: Do we want to allow deletion of non-existent keys?
-	assert(n != NULL);
+	if (!n)
+		return 1;
 	assert(n->flags & F_WORD);
 	n->flags &= ~F_WORD;
 	if (n->nchild > 1)
