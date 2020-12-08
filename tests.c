@@ -51,7 +51,11 @@ static void test_iter_seq(void)
 		assert(!strcmp(key, key2));
 		more = inc(key);
 	}
+	free(key2);
 	assert(!more);
+
+	ctrie_iter_free(&it);
+	ctrie_free(&t);
 }
 
 static void test_insert_seq(void)
@@ -161,8 +165,8 @@ static void test_remove_seq(void)
 	char key[KEY_MAX_LEN + 1];
 
 	ctrie_init(&a, 0);
-	ctrie_init(&c, 0);
 	ctrie_init(&b, 0);
+	ctrie_init(&c, 0);
 
 	rst(key);
 	do {
@@ -171,7 +175,6 @@ static void test_remove_seq(void)
 	} while (inc(key));
 
 	struct ctrie_iter it;
-	//struct ctnode *n;
 	char *key2 = NULL;
 	size_t key2_size = 0;
 	rst(key);
@@ -191,6 +194,11 @@ static void test_remove_seq(void)
 				assert(ctrie_contains(&a, key2));
 		ctrie_iter_free(&it);
 	} while (inc(key));
+
+	free(key2);
+	ctrie_free(&a);
+	ctrie_free(&b);
+	ctrie_free(&c);
 }
 
 int main(void)

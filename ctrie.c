@@ -194,7 +194,6 @@ static void delete_node(struct ctnode *n)
 
 void ctrie_free(struct ctrie *t)
 {
-	return;
 	delete_node(t->fake_root);
 }
 
@@ -218,14 +217,18 @@ void ctrie_free(struct ctrie *t)
  * the trie to conserve space. Since all operations on `t` require at most the
  * grand-parent of modified node, this seems reasonable.
  */
-static inline struct ctnode *find3(struct ctrie *t, char *key,
-	struct ctnode **pp, size_t *ppi, struct ctnode **p, size_t *pi)
+static inline struct ctnode *find3(struct ctrie *t,
+                                   char *key,
+                                   struct ctnode **pp,
+                                   size_t *ppi,
+                                   struct ctnode **p,
+                                   size_t *pi)
 {
 	*ppi = *pi = 0;
 	*pp = NULL;
 	*p = t->fake_root;
 	struct ctnode *w = NULL, *wp = *p, *wpp = *pp;
-	size_t wpi, wppi;
+	size_t wpi = 0, wppi = 0;
 	struct ctnode *n = t->fake_root->child[0];
 	while (n) {
 		char *l;
