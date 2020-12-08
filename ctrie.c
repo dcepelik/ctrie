@@ -44,7 +44,7 @@ enum
  */
 struct ctnode
 {
-	char label[LABEL_SIZE];  /* short-enough label or a pointer to a label */
+	char label[LABEL_SIZE];  /* short-enough label or pointer to a label */
 	byte_t flags;            /* various flags */
 	byte_t size;             /* capacity of the `child` array */
 	byte_t nchild;           /* number of children */
@@ -161,7 +161,10 @@ static size_t find_child_idx(struct ctrie *t, struct ctnode *n, char k)
 #define ARRAY_SHIFT(a, j, i, size) \
 	memmove((a) + (j), (a) + (i), ((size) - (i)) * sizeof(*(a)))
 
-static struct ctnode *insert_child(struct ctrie *t, struct ctnode *n, char k, struct ctnode *child)
+static struct ctnode *insert_child(struct ctrie *t,
+                                   struct ctnode *n,
+                                   char k,
+                                   struct ctnode *child)
 {
 	if (n->size == n->nchild)
 		n = resize(t, n, MAX(1, MIN(2 * n->size, 255)));
@@ -388,9 +391,8 @@ int ctrie_remove(struct ctrie *t, char *key)
 	struct ctnode *pp, *p;
 	size_t ppi, pi;
 	struct ctnode *n = find3(t, key, &pp, &ppi, &p, &pi);
+	// TODO: Do we want to allow deletion of non-existent keys?
 	assert(n != NULL);
-	if (!n)
-		return -1; /* TODO indicate error */
 	assert(n->flags & F_WORD);
 	n->flags &= ~F_WORD;
 	if (n->nchild > 1)
@@ -457,7 +459,9 @@ void ctrie_iter_init(struct ctrie *t, struct ctrie_iter *it)
 	push(it, t->fake_root->child[0])->key_len = 0;
 }
 
-struct ctnode *ctrie_iter_next(struct ctrie_iter *it, char **key, size_t *key_size)
+struct ctnode *ctrie_iter_next(struct ctrie_iter *it,
+                               char **key,
+                               size_t *key_size)
 {
 	struct ctrie_iter_stkent *se;
 	struct ctnode *n;
