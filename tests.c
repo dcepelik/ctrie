@@ -134,6 +134,7 @@ static void test_insert_english(void)
 
 	while ((len = getline(&word, &word_size, words)) > 0) {
 		word[len - 1] = '\0'; /* trim the new-line */
+		assert(len <= ENGLISH_WORD_MAX + 1);
 		d = ctrie_insert(&t, word, false);
 		strncpy(d, word, len + 1);
 	}
