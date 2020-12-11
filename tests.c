@@ -1,5 +1,6 @@
 #include "ctrie.h"
 #include <assert.h>
+#include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +19,7 @@ static void rst(char k[KEY_MAX_LEN])
 	k[KEY_MAX_LEN] = '\0';
 }
 
-int inc(char k[KEY_MAX_LEN])
+static int inc(char k[KEY_MAX_LEN])
 {
 	int i;
 	for (i = KEY_MAX_LEN - 1; i >= 0; i--) {
@@ -132,19 +133,33 @@ static void test_insert_english(void)
 
 	ctrie_init(&t, word_size);
 
-	while ((len = getline(&word, &word_size, words)) > 0) {
+	while ((errno = 0, len = getline(&word, &word_size, words)) > 0) {
 		word[len - 1] = '\0'; /* trim the new-line */
 		assert(len <= ENGLISH_WORD_MAX + 1);
 		d = ctrie_insert(&t, word, false);
 		strncpy(d, word, len + 1);
 	}
-	fseek(words, SEEK_SET, 0);
-	while ((len = getline(&word, &word_size, words)) > 0) {
+	if (errno) {
+		perror("getline");
+		exit(EXIT_FAILURE);
+	}
+
+	if (fseek(words, SEEK_SET, 0)) {
+		perror("fseek");
+		exit(EXIT_FAILURE);
+	}
+
+	while ((errno = 0, len = getline(&word, &word_size, words)) > 0) {
 		word[len - 1] = '\0'; /* strip trailing newline */
 		assert(ctrie_contains(&t, word));
 		d = ctrie_find(&t, word);
 		assert(strcmp(d, word) == 0);
 	}
+	if (errno) {
+		perror("getline");
+		exit(EXIT_FAILURE);
+	}
+
 	free(word);
 	fclose(words);
 	ctrie_free(&t);
@@ -202,13 +217,27 @@ static void test_remove_seq(void)
 	ctrie_free(&c);
 }
 
+// Test that the key does not contain the empty key, unless inserted.
+static void test_not_contains_empty(void)
+{
+	struct ctrie a;
+        ctrie_init(&a, 0);
+        assert(!ctrie_contains(&a, ""));
+	ctrie_free(&a);
+}
+
 int main(void)
 {
-	srand(time(NULL));
-	test_iter_seq();
-	test_insert_seq();
-	test_insert_long_keys();
+	time_t t = time(NULL);
+	fprintf(stderr, "Running with seed 0x%lx\n", t);
+	srand(t);
+
+	test_not_contains_empty();
 	test_insert_english();
+	test_insert_long_keys();
+	test_insert_seq();
+	test_iter_seq();
 	test_remove_seq();
+
 	return EXIT_SUCCESS;
 }
